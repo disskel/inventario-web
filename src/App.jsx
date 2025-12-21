@@ -88,28 +88,30 @@ function App() {
     if (prods) setProductos(prods);
   }
 
-  // --- 3. LÓGICA DE HISTORIAL (AUDITORÍA) ---
-  
-  // Función maestra que carga el historial según filtros y página
+  // --- 3. LÓGICA DE HISTORIAL (CORREGIDA CON ZONA HORARIA) ---
   async function cargarHistorial(pagina = 1) {
-    // Calculamos el rango (ej: Pagina 1 es del 0 al 9)
     const desde = (pagina - 1) * ITEMS_POR_PAGINA;
     const hasta = desde + ITEMS_POR_PAGINA - 1;
 
     let query = supabase
       .from("movimientos")
-      .select("*, productos(nombre)", { count: "exact" }) // count nos sirve para saber el total
+      .select("*, productos(nombre)", { count: "exact" })
       .order("fecha_movimiento", { ascending: false })
       .range(desde, hasta);
 
-    // Aplicamos filtros de fecha si existen
+    // FIX ZONA HORARIA: Convertimos tu hora local a UTC para la base de datos
     if (fechaInicio) {
-      // Desde las 00:00:00 del día seleccionado
-      query = query.gte("fecha_movimiento", `${fechaInicio}T00:00:00`);
+      // Creamos la fecha local a las 00:00:00
+      const fechaLocalInicio = new Date(`${fechaInicio}T00:00:00`);
+      // Le enviamos a Supabase el equivalente en UTC
+      query = query.gte("fecha_movimiento", fechaLocalInicio.toISOString());
     }
+    
     if (fechaFin) {
-      // Hasta las 23:59:59 del día seleccionado
-      query = query.lte("fecha_movimiento", `${fechaFin}T23:59:59`);
+      // Creamos la fecha local a las 23:59:59.999
+      const fechaLocalFin = new Date(`${fechaFin}T23:59:59.999`);
+      // Le enviamos a Supabase el equivalente en UTC
+      query = query.lte("fecha_movimiento", fechaLocalFin.toISOString());
     }
 
     const { data, error } = await query;
