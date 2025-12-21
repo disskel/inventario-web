@@ -15,13 +15,19 @@ function App() {
   const [categorias, setCategorias] = useState([]);
   const [unidades, setUnidades] = useState([]);
   
-  // Form States
+  // Form States (Crear/Editar)
   const [nombre, setNombre] = useState("");
   const [precio, setPrecio] = useState("");
-  const [stock, setStock] = useState(""); // Solo lectura en edición
+  const [stock, setStock] = useState("");
   const [categoria, setCategoria] = useState("");
   const [unidad, setUnidad] = useState("");
   const [idEditar, setIdEditar] = useState(null);
+
+  // --- NUEVOS ESTADOS PARA LA VENTANA FLOTANTE (MODAL) ---
+  const [modalVisible, setModalVisible] = useState(false);
+  const [prodKardex, setProdKardex] = useState(null); // Producto que estamos tocando
+  const [tipoKardex, setTipoKardex] = useState("");   // "ENTRADA" o "SALIDA"
+  const [cantidadKardex, setCantidadKardex] = useState(""); // Lo que escribe el usuario
 
   // --- 1. GESTIÓN DE SESIÓN ---
   useEffect(() => {
@@ -57,7 +63,6 @@ function App() {
       .select("*, categorias(nombre), unidades_medida(nombre)")
       .order("id", { ascending: false });
     
-    // Cargamos catálogos solo si están vacíos
     if (categorias.length === 0) {
       const { data: cats } = await supabase.from("categorias").select("*");
       if (cats) setCategorias(cats);
@@ -66,88 +71,81 @@ function App() {
       const { data: unis } = await supabase.from("unidades_medida").select("*");
       if (unis) setUnidades(unis);
     }
-
     if (prods) setProductos(prods);
   }
 
-  // --- 3. LÓGICA DE KARDEX (MOVIMIENTOS) ---
-  async function registrarMovimiento(producto, tipo) {
-    // 1. Preguntamos la cantidad
-    const cantidadStr = prompt(`¿Cuántas unidades van a ${tipo === "ENTRADA" ? "ENTRAR" : "SALIR"}?`);
-    
-    // Si le dio a "Cancelar", no hacemos nada
-    if (cantidadStr === null) return; 
+  // --- 3. LÓGICA DE KARDEX (MODAL + TRANSACCIÓN) ---
 
-    // 2. VALIDACIÓN ESTRICTA (El cambio importante)
-    // Explicación: /^\d+$/ significa "Desde el inicio hasta el fin, solo acepto dígitos numéricos"
-    const esSoloNumeros = /^\d+$/.test(cantidadStr); 
+  // Paso A: Abrir la ventana flotante
+  function abrirModalKardex(producto, tipo) {
+    setProdKardex(producto);
+    setTipoKardex(tipo);
+    setCantidadKardex(""); // Limpiar input
+    setModalVisible(true); // Mostrar ventana
+  }
 
+  // Paso B: Confirmar y Guardar (Sustituye al antiguo prompt)
+  async function confirmarMovimiento(e) {
+    e.preventDefault(); // Evita recarga
+
+    // Validación Estricta
+    const esSoloNumeros = /^\d+$/.test(cantidadKardex);
     if (!esSoloNumeros) {
-      alert("⚠️ Error: Ingresaste letras o símbolos ('" + cantidadStr + "'). Por favor escribe SOLO números.");
+      alert("⚠️ Error: Escribe SOLO números enteros.");
       return;
     }
-
-    const cantidad = parseInt(cantidadStr);
-
+    const cantidad = parseInt(cantidadKardex);
     if (cantidad <= 0) {
-      alert("⚠️ Por favor ingresa una cantidad mayor a 0");
+      alert("⚠️ La cantidad debe ser mayor a 0.");
       return;
     }
 
-    // 3. Calculamos nuevo stock
-    let nuevoStock = producto.stock_actual;
-    if (tipo === "ENTRADA") {
+    // Cálculos
+    let nuevoStock = prodKardex.stock_actual;
+    if (tipoKardex === "ENTRADA") {
       nuevoStock = nuevoStock + cantidad;
-    } else { // SALIDA
-      if (cantidad > producto.stock_actual) {
-        alert("⚠️ ¡Stock insuficiente! Solo tienes " + producto.stock_actual + " unidades.");
+    } else {
+      if (cantidad > prodKardex.stock_actual) {
+        alert(`⚠️ Stock insuficiente. Solo tienes ${prodKardex.stock_actual}.`);
         return;
       }
       nuevoStock = nuevoStock - cantidad;
     }
 
-    // --- TRANSACCIÓN (Guardar en DB) ---
-    // 4. Guardar en historial
-    const { error: errorHistorial } = await supabase.from("movimientos").insert({
-      producto_id: producto.id,
-      tipo_movimiento: tipo,
+    // Guardar en Supabase
+    const { error: errorHist } = await supabase.from("movimientos").insert({
+      producto_id: prodKardex.id,
+      tipo_movimiento: tipoKardex,
       cantidad: cantidad,
       usuario_id: session.user.id
     });
 
-    if (errorHistorial) {
-      alert("Error guardando historial: " + errorHistorial.message);
+    if (errorHist) {
+      alert("Error: " + errorHist.message);
       return;
     }
 
-    // 5. Actualizar producto
     const { error: errorProd } = await supabase
       .from("productos")
       .update({ stock_actual: nuevoStock })
-      .eq("id", producto.id);
+      .eq("id", prodKardex.id);
 
-    if (errorProd) {
-      alert("Error actualizando stock: " + errorProd.message);
-    } else {
-      fetchDatos();
-      if (navigator.vibrate) navigator.vibrate(50); // Vibrar si es celular
+    if (!errorProd) {
+      setModalVisible(false); // CERRAR VENTANA
+      fetchDatos();           // REFRESCAR LISTA
+      if (navigator.vibrate) navigator.vibrate(50);
     }
   }
 
-  // --- 4. CRUD PRODUCTOS ---
+  // --- 4. CRUD PRODUCTOS (Crear/Editar) ---
   async function manejarEnvio(e) {
     e.preventDefault();
     if (!nombre || !precio || !categoria) { alert("Faltan datos"); return; }
     
-    // Si es nuevo, usamos el stock del formulario. Si editamos, ignoramos el stock (se usa Kardex)
     const payload = { 
-      nombre, 
-      precio_venta: precio, 
-      categoria_id: categoria, 
-      unidad_medida_id: unidad 
+      nombre, precio_venta: precio, categoria_id: categoria, unidad_medida_id: unidad 
     };
-
-    if (!idEditar) payload.stock_actual = stock; // Solo al crear asignamos stock inicial
+    if (!idEditar) payload.stock_actual = stock;
 
     let error;
     if (idEditar) {
@@ -172,7 +170,7 @@ function App() {
   }
 
   async function eliminarProducto(id) {
-    if (confirm("¿Borrar producto permanentemente?")) {
+    if (confirm("¿Borrar permanentemente?")) {
       await supabase.from("productos").delete().eq("id", id);
       fetchDatos();
     }
@@ -185,13 +183,16 @@ function App() {
   // --- ESTILOS ---
   const containerStyle = { padding: "15px", fontFamily: "sans-serif", maxWidth: "600px", margin: "0 auto", background: "#121212", color: "#e0e0e0", minHeight: "100vh" };
   const cardStyle = { background: "#1e1e1e", padding: "15px", marginBottom: "15px", borderRadius: "12px", boxShadow: "0 4px 6px rgba(0,0,0,0.3)" };
-  const inputStyle = { padding: "12px", margin: "5px 0", width: "100%", borderRadius: "8px", border: "1px solid #333", background: "#2c2c2c", color: "white" };
-  const btnStyle = { padding: "12px", width: "100%", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "10px" };
-  const btnKardex = { padding: "8px 15px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer", color: "white", flex: 1 };
+  const inputStyle = { padding: "12px", margin: "5px 0", width: "100%", borderRadius: "8px", border: "1px solid #333", background: "#2c2c2c", color: "white", fontSize: "16px" };
+  const btnStyle = { padding: "12px", width: "100%", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "10px", fontSize: "16px" };
+  const btnKardex = { padding: "10px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer", color: "white", flex: 1 };
+
+  // Estilos del Modal (Ventana Flotante)
+  const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.85)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
+  const modalBoxStyle = { background: "#252525", padding: "25px", borderRadius: "15px", width: "85%", maxWidth: "350px", textAlign: "center", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
 
-  // --- VISTA LOGIN ---
   if (!session) {
     return (
       <div style={{...containerStyle, display: "flex", flexDirection: "column", justifyContent: "center", height: "80vh"}}>
@@ -210,7 +211,6 @@ function App() {
     );
   }
 
-  // --- VISTA PRINCIPAL ---
   return (
     <div style={containerStyle}>
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
@@ -218,7 +218,7 @@ function App() {
         <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px"}}>Salir</button>
       </div>
       
-      {/* FORMULARIO (Colapsable visualmente) */}
+      {/* FORMULARIO CREAR/EDITAR */}
       <div style={{ background: "#252525", padding: "15px", borderRadius: "12px", marginBottom: "20px", borderLeft: idEditar ? "4px solid #fbc02d" : "4px solid #2196f3" }}>
         <h3 style={{ marginTop: 0 }}>{idEditar ? "✏️ Editar Producto" : "➕ Crear Nuevo"}</h3>
         <form onSubmit={manejarEnvio}>
@@ -235,7 +235,6 @@ function App() {
           </div>
           <div style={{ display: "flex", gap: "10px" }}>
             <input type="number" placeholder="Precio S/" value={precio} onChange={(e) => setPrecio(e.target.value)} style={inputStyle} />
-            {/* El stock solo se puede poner manualmente al CREAR. Al editar se bloquea para obligar a usar Kardex */}
             {!idEditar && <input type="number" placeholder="Stock Inicial" value={stock} onChange={(e) => setStock(e.target.value)} style={inputStyle} />}
           </div>
           <button type="submit" style={{...btnStyle, background: idEditar ? "#fbc02d" : "#2196f3", color: idEditar ? "black" : "white"}}>
@@ -248,17 +247,15 @@ function App() {
       {/* LISTADO DE TARJETAS */}
       {productos.map((prod) => (
         <div key={prod.id} style={cardStyle}>
-          {/* Cabecera Tarjeta */}
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom:"10px" }}>
             <div>
               <h3 style={{ margin: "0 0 5px 0", fontSize:"1.2em" }}>{prod.nombre}</h3>
               <div style={{ fontSize: "0.85em", color: "#aaa" }}>
-                📂 {prod.categorias?.nombre} | 📏 {prod.unidades_medida?.abreviatura || "u."}
+                📂 {prod.categorias?.nombre} | 📏 {prod.unidades_medida?.abreviatura}
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize:"1.3em", fontWeight:"bold", color:"#4caf50" }}>S/ {prod.precio_venta}</div>
-              {/* Botones Pequeños de Gestión */}
               <div style={{ marginTop: "5px" }}>
                 <button onClick={() => cargarDatosParaEditar(prod)} style={{background:"transparent", border:"none", cursor:"pointer", fontSize:"1.2em", padding:"0 5px"}}>✏️</button>
                 <button onClick={() => eliminarProducto(prod.id)} style={{background:"transparent", border:"none", cursor:"pointer", fontSize:"1.2em", padding:"0 5px"}}>🗑️</button>
@@ -266,26 +263,56 @@ function App() {
             </div>
           </div>
 
-          {/* ZONA KARDEX (STOCK) */}
           <div style={{ background: "#333", padding: "10px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-            {/* Botón Salida */}
-            <button onClick={() => registrarMovimiento(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>
-              - SALIDA
-            </button>
-            
-            {/* Visualizador Stock */}
+            {/* OJO: Aquí llamamos a abrirModalKardex en vez de registrarMovimiento */}
+            <button onClick={() => abrirModalKardex(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>- SALIDA</button>
             <div style={{ textAlign: "center", minWidth: "60px" }}>
               <div style={{ fontSize: "0.8em", color: "#aaa" }}>STOCK</div>
               <div style={{ fontSize: "1.4em", fontWeight: "bold", color: "white" }}>{prod.stock_actual}</div>
             </div>
-
-            {/* Botón Entrada */}
-            <button onClick={() => registrarMovimiento(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>
-              + ENTRADA
-            </button>
+            <button onClick={() => abrirModalKardex(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>+ ENTRADA</button>
           </div>
         </div>
       ))}
+
+      {/* --- AQUÍ ESTÁ EL CÓDIGO DE LA VENTANA NUEVA (MODAL) --- */}
+      {modalVisible && (
+        <div style={overlayStyle}>
+          <div style={modalBoxStyle}>
+            {/* Título Dinámico */}
+            <h2 style={{marginTop: 0, color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}}>
+              {tipoKardex === "ENTRADA" ? "📥 Registrar Entrada" : "📤 Registrar Salida"}
+            </h2>
+            <p style={{color: "#aaa", marginBottom: "15px"}}>
+              Producto: <strong>{prodKardex?.nombre}</strong> <br/>
+              <small>Stock actual: {prodKardex?.stock_actual}</small>
+            </p>
+            
+            <form onSubmit={confirmarMovimiento}>
+              {/* Input grande y numérico */}
+              <input 
+                type="number" 
+                inputMode="numeric" // Truco para activar teclado numérico en celular
+                autoFocus 
+                placeholder="Cantidad"
+                value={cantidadKardex}
+                onChange={(e) => setCantidadKardex(e.target.value)}
+                style={{...inputStyle, fontSize: "20px", textAlign: "center", width: "100px"}} 
+              />
+              
+              <div style={{display: "flex", gap: "10px", marginTop: "15px"}}>
+                <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#555", marginTop: 0}}>
+                  CANCELAR
+                </button>
+                <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0}}>
+                  CONFIRMAR
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
