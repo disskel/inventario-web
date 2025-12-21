@@ -5,17 +5,17 @@ function App() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
   
-  // Login States
+  // Login
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(null);
 
-  // Data States
+  // Datos Maestros
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [unidades, setUnidades] = useState([]);
   
-  // Form States
+  // Formulario Producto
   const [nombre, setNombre] = useState("");
   const [precio, setPrecio] = useState("");
   const [stock, setStock] = useState("");
@@ -23,20 +23,25 @@ function App() {
   const [unidad, setUnidad] = useState("");
   const [idEditar, setIdEditar] = useState(null);
 
-  // Kardex States
+  // Kardex Modal
   const [modalVisible, setModalVisible] = useState(false);
   const [prodKardex, setProdKardex] = useState(null);
   const [tipoKardex, setTipoKardex] = useState("");
   const [cantidadKardex, setCantidadKardex] = useState("");
 
-  // Filtros States
+  // Filtros Principal
   const [busqueda, setBusqueda] = useState("");
   const [filtroCategoria, setFiltroCategoria] = useState("");
   const [filtroUnidad, setFiltroUnidad] = useState("");
 
-  // --- NUEVO: ESTADOS DE HISTORIAL ---
+  // --- ESTADOS DE HISTORIAL AVANZADO ---
   const [verHistorial, setVerHistorial] = useState(false);
   const [listaMovimientos, setListaMovimientos] = useState([]);
+  // Paginación y Filtros
+  const [historialPagina, setHistorialPagina] = useState(1);
+  const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaFin, setFechaFin] = useState("");
+  const ITEMS_POR_PAGINA = 10;
 
   // --- 1. GESTIÓN DE SESIÓN ---
   useEffect(() => {
@@ -83,21 +88,48 @@ function App() {
     if (prods) setProductos(prods);
   }
 
-  // --- NUEVO: FUNCIÓN PARA CARGAR HISTORIAL ---
-  async function abrirHistorial() {
-    setVerHistorial(true); // Mostrar ventana
-    // Traemos los movimientos y el nombre del producto asociado
-    const { data, error } = await supabase
-      .from("movimientos")
-      .select("*, productos(nombre)")
-      .order("fecha_movimiento", { ascending: false }) // Los más recientes primero
-      .limit(50); // Traer solo los últimos 50 para que sea rápido
+  // --- 3. LÓGICA DE HISTORIAL (AUDITORÍA) ---
+  
+  // Función maestra que carga el historial según filtros y página
+  async function cargarHistorial(pagina = 1) {
+    // Calculamos el rango (ej: Pagina 1 es del 0 al 9)
+    const desde = (pagina - 1) * ITEMS_POR_PAGINA;
+    const hasta = desde + ITEMS_POR_PAGINA - 1;
 
-    if (data) setListaMovimientos(data);
-    if (error) alert("Error cargando historial");
+    let query = supabase
+      .from("movimientos")
+      .select("*, productos(nombre)", { count: "exact" }) // count nos sirve para saber el total
+      .order("fecha_movimiento", { ascending: false })
+      .range(desde, hasta);
+
+    // Aplicamos filtros de fecha si existen
+    if (fechaInicio) {
+      // Desde las 00:00:00 del día seleccionado
+      query = query.gte("fecha_movimiento", `${fechaInicio}T00:00:00`);
+    }
+    if (fechaFin) {
+      // Hasta las 23:59:59 del día seleccionado
+      query = query.lte("fecha_movimiento", `${fechaFin}T23:59:59`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      alert("Error cargando historial");
+    } else {
+      setListaMovimientos(data);
+      setHistorialPagina(pagina);
+    }
   }
 
-  // --- 3. LÓGICA DE FILTRADO ---
+  // Al abrir el modal, cargamos la página 1 sin filtros (o con los que haya)
+  function abrirModalHistorial() {
+    setVerHistorial(true);
+    setHistorialPagina(1);
+    cargarHistorial(1);
+  }
+
+  // --- 4. LÓGICA DE FILTRADO PRINCIPAL ---
   const productosFiltrados = productos.filter((prod) => {
     const coincideTexto = prod.nombre.toLowerCase().includes(busqueda.toLowerCase());
     const coincideCat = filtroCategoria ? prod.categoria_id == filtroCategoria : true;
@@ -105,7 +137,7 @@ function App() {
     return coincideTexto && coincideCat && coincideUni;
   });
 
-  // --- 4. LÓGICA DE KARDEX (MODAL) ---
+  // --- 5. LÓGICA DE KARDEX (MOVIMIENTOS) ---
   function abrirModalKardex(producto, tipo) {
     setProdKardex(producto);
     setTipoKardex(tipo);
@@ -125,7 +157,7 @@ function App() {
     if (tipoKardex === "ENTRADA") {
       nuevoStock = nuevoStock + cantidad;
     } else {
-      if (cantidad > prodKardex.stock_actual) { alert(`⚠️ Stock insuficiente. Solo tienes ${prodKardex.stock_actual}.`); return; }
+      if (cantidad > prodKardex.stock_actual) { alert(`⚠️ Stock insuficiente.`); return; }
       nuevoStock = nuevoStock - cantidad;
     }
 
@@ -147,7 +179,7 @@ function App() {
     }
   }
 
-  // --- 5. CRUD PRODUCTOS ---
+  // --- 6. CRUD PRODUCTOS ---
   async function manejarEnvio(e) {
     e.preventDefault();
     if (!nombre || !precio || !categoria) { alert("Faltan datos"); return; }
@@ -192,7 +224,7 @@ function App() {
   const btnStyle = { padding: "12px", width: "100%", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "10px", fontSize: "16px" };
   const btnKardex = { padding: "10px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer", color: "white", flex: 1 };
   const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
-  const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "90%", maxWidth: "500px", maxHeight: "80vh", overflowY: "auto", border: "1px solid #444" };
+  const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "95%", maxWidth: "500px", maxHeight: "90vh", overflowY: "auto", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
 
@@ -220,8 +252,7 @@ function App() {
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
         <h2 style={{margin:0}}>📦 Mi Bodega</h2>
         <div style={{display:"flex", gap:"10px"}}>
-          {/* BOTÓN HISTORIAL NUEVO */}
-          <button onClick={abrirHistorial} style={{padding:"8px 12px", background:"#0288d1", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>
+          <button onClick={abrirModalHistorial} style={{padding:"8px 12px", background:"#0288d1", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>
             📜 Historial
           </button>
           <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>
@@ -303,7 +334,7 @@ function App() {
         </div>
       ))}
 
-      {/* MODAL KARDEX (ENTRADA/SALIDA) */}
+      {/* MODAL KARDEX */}
       {modalVisible && (
         <div style={overlayStyle}>
           <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
@@ -322,45 +353,55 @@ function App() {
         </div>
       )}
 
-      {/* --- MODAL DE HISTORIAL (AUDITORÍA) --- */}
+      {/* --- MODAL DE HISTORIAL AVANZADO --- */}
       {verHistorial && (
         <div style={overlayStyle}>
           <div style={modalBoxStyle}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
-              <h2 style={{margin:0, color: "#0288d1"}}>📜 Historial de Movimientos</h2>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"15px"}}>
+              <h2 style={{margin:0, color: "#0288d1"}}>📜 Historial</h2>
               <button onClick={() => setVerHistorial(false)} style={{background:"transparent", border:"none", color:"white", fontSize:"1.5em", cursor:"pointer"}}>✖️</button>
             </div>
 
+            {/* BARRA DE FILTROS DE FECHA */}
+            <div style={{background:"#333", padding:"10px", borderRadius:"8px", marginBottom:"15px", display:"flex", gap:"10px", flexDirection:"column"}}>
+               <div style={{display:"flex", gap:"10px", alignItems:"center"}}>
+                 <label style={{color:"#aaa", width:"50px"}}>Desde:</label>
+                 <input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} style={{...inputStyle, margin:0, padding:"8px"}} />
+               </div>
+               <div style={{display:"flex", gap:"10px", alignItems:"center"}}>
+                 <label style={{color:"#aaa", width:"50px"}}>Hasta:</label>
+                 <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} style={{...inputStyle, margin:0, padding:"8px"}} />
+               </div>
+               <button onClick={() => cargarHistorial(1)} style={{...btnStyle, background:"#555", marginTop:"5px", padding:"8px"}}>🔎 FILTRAR</button>
+            </div>
+
+            {/* TABLA */}
             {listaMovimientos.length === 0 ? (
-               <p style={{textAlign:"center", color:"#aaa"}}>No hay movimientos registrados.</p>
+               <p style={{textAlign:"center", color:"#aaa"}}>No hay movimientos.</p>
             ) : (
               <table style={{width:"100%", borderCollapse:"collapse", fontSize:"0.9em"}}>
                 <thead>
                   <tr style={{borderBottom:"1px solid #555", color:"#aaa"}}>
-                    <th style={{padding:"10px", textAlign:"left"}}>Fecha</th>
-                    <th style={{padding:"10px", textAlign:"left"}}>Producto</th>
-                    <th style={{padding:"10px", textAlign:"center"}}>Tipo</th>
-                    <th style={{padding:"10px", textAlign:"right"}}>Cant.</th>
+                    <th style={{padding:"8px", textAlign:"left"}}>Detalle</th>
+                    <th style={{padding:"8px", textAlign:"right"}}>Cant.</th>
                   </tr>
                 </thead>
                 <tbody>
                   {listaMovimientos.map((mov) => (
                     <tr key={mov.id} style={{borderBottom:"1px solid #333"}}>
-                      <td style={{padding:"10px", color:"#ccc"}}>
-                        {new Date(mov.fecha_movimiento).toLocaleDateString()} <br/>
-                        <small>{new Date(mov.fecha_movimiento).toLocaleTimeString()}</small>
-                      </td>
-                      <td style={{padding:"10px"}}>{mov.productos?.nombre || "Producto borrado"}</td>
-                      <td style={{padding:"10px", textAlign:"center"}}>
+                      <td style={{padding:"8px"}}>
+                        <div style={{fontWeight:"bold", color:"white"}}>{mov.productos?.nombre || "Borrado"}</div>
+                        <div style={{fontSize:"0.8em", color:"#888"}}>
+                          {new Date(mov.fecha_movimiento).toLocaleDateString()} {new Date(mov.fecha_movimiento).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
                         <span style={{
-                          background: mov.tipo_movimiento === "ENTRADA" ? "rgba(102, 187, 106, 0.2)" : "rgba(239, 83, 80, 0.2)",
                           color: mov.tipo_movimiento === "ENTRADA" ? "#66bb6a" : "#ef5350",
-                          padding: "3px 8px", borderRadius: "10px", fontSize: "0.85em", fontWeight: "bold"
+                          fontSize: "0.8em", fontWeight: "bold"
                         }}>
                           {mov.tipo_movimiento}
                         </span>
                       </td>
-                      <td style={{padding:"10px", textAlign:"right", fontWeight:"bold", fontSize:"1.1em"}}>
+                      <td style={{padding:"8px", textAlign:"right", fontWeight:"bold", fontSize:"1.2em", color:"white"}}>
                         {mov.cantidad}
                       </td>
                     </tr>
@@ -369,7 +410,26 @@ function App() {
               </table>
             )}
             
-            <button onClick={() => setVerHistorial(false)} style={{...btnStyle, background: "#444", marginTop: "20px"}}>CERRAR</button>
+            {/* PAGINACIÓN */}
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:"20px", paddingTop:"10px", borderTop:"1px solid #444"}}>
+                <button 
+                  onClick={() => cargarHistorial(historialPagina - 1)} 
+                  disabled={historialPagina === 1}
+                  style={{background: historialPagina === 1 ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina === 1 ? "not-allowed" : "pointer"}}
+                >
+                  ⬅ Ant.
+                </button>
+                
+                <span style={{color:"#aaa"}}>Página {historialPagina}</span>
+
+                <button 
+                  onClick={() => cargarHistorial(historialPagina + 1)}
+                  disabled={listaMovimientos.length < ITEMS_POR_PAGINA} // Si trajo menos de 10, es la ultima pagina
+                  style={{background: listaMovimientos.length < ITEMS_POR_PAGINA ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: listaMovimientos.length < ITEMS_POR_PAGINA ? "not-allowed" : "pointer"}}
+                >
+                  Sig. ➡
+                </button>
+            </div>
           </div>
         </div>
       )}
