@@ -15,7 +15,7 @@ function App() {
   const [categorias, setCategorias] = useState([]);
   const [unidades, setUnidades] = useState([]);
   
-  // Form States
+  // Form States (Crear/Editar)
   const [nombre, setNombre] = useState("");
   const [precio, setPrecio] = useState("");
   const [stock, setStock] = useState("");
@@ -28,6 +28,11 @@ function App() {
   const [prodKardex, setProdKardex] = useState(null);
   const [tipoKardex, setTipoKardex] = useState("");
   const [cantidadKardex, setCantidadKardex] = useState("");
+
+  // --- NUEVOS ESTADOS: FILTROS ---
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroCategoria, setFiltroCategoria] = useState("");
+  const [filtroUnidad, setFiltroUnidad] = useState("");
 
   // --- 1. GESTIÓN DE SESIÓN ---
   useEffect(() => {
@@ -60,7 +65,7 @@ function App() {
   async function fetchDatos() {
     const { data: prods } = await supabase
       .from("productos")
-      .select("*, categorias(nombre), unidades_medida(nombre)") // Traemos los NOMBRES
+      .select("*, categorias(nombre), unidades_medida(nombre)")
       .order("id", { ascending: false });
     
     if (categorias.length === 0) {
@@ -74,7 +79,23 @@ function App() {
     if (prods) setProductos(prods);
   }
 
-  // --- 3. LÓGICA DE KARDEX (MODAL) ---
+  // --- 3. LÓGICA DE FILTRADO (EL CEREBRO NUEVO) ---
+  // Esta variable calcula qué mostrar en tiempo real
+  const productosFiltrados = productos.filter((prod) => {
+    // 1. Filtro de Texto (Buscador)
+    const coincideTexto = prod.nombre.toLowerCase().includes(busqueda.toLowerCase());
+    
+    // 2. Filtro de Categoría (Si hay algo seleccionado, debe coincidir)
+    const coincideCat = filtroCategoria ? prod.categoria_id == filtroCategoria : true;
+    
+    // 3. Filtro de Unidad
+    const coincideUni = filtroUnidad ? prod.unidad_medida_id == filtroUnidad : true;
+
+    return coincideTexto && coincideCat && coincideUni;
+  });
+
+
+  // --- 4. LÓGICA DE KARDEX (MODAL) ---
   function abrirModalKardex(producto, tipo) {
     setProdKardex(producto);
     setTipoKardex(tipo);
@@ -84,7 +105,6 @@ function App() {
 
   async function confirmarMovimiento(e) {
     e.preventDefault();
-    
     const esSoloNumeros = /^\d+$/.test(cantidadKardex);
     if (!esSoloNumeros) { alert("⚠️ Error: Escribe SOLO números enteros."); return; }
     
@@ -117,7 +137,7 @@ function App() {
     }
   }
 
-  // --- 4. CRUD PRODUCTOS ---
+  // --- 5. CRUD PRODUCTOS ---
   async function manejarEnvio(e) {
     e.preventDefault();
     if (!nombre || !precio || !categoria) { alert("Faltan datos"); return; }
@@ -192,7 +212,7 @@ function App() {
         <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px"}}>Salir</button>
       </div>
       
-      {/* FORMULARIO */}
+      {/* 1. FORMULARIO DE CREAR/EDITAR */}
       <div style={{ background: "#252525", padding: "15px", borderRadius: "12px", marginBottom: "20px", borderLeft: idEditar ? "4px solid #fbc02d" : "4px solid #2196f3" }}>
         <h3 style={{ marginTop: 0 }}>{idEditar ? "✏️ Editar Producto" : "➕ Crear Nuevo"}</h3>
         <form onSubmit={manejarEnvio}>
@@ -218,45 +238,82 @@ function App() {
         </form>
       </div>
 
-      {/* LISTADO DE TARJETAS MEJORADO */}
-      {productos.map((prod) => (
-        <div key={prod.id} style={cardStyle}>
-          
-          {/* Parte Superior: Nombre y Precio */}
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom:"10px", borderBottom:"1px solid #333", paddingBottom:"10px" }}>
-            <div>
-              <h3 style={{ margin: "0 0 5px 0", fontSize:"1.3em", color:"white" }}>{prod.nombre}</h3>
-              
-              {/* AQUÍ ESTÁ EL CAMBIO: Texto claro en lugar de solo iconos */}
-              <div style={{ fontSize: "0.9em", color: "#aaa" }}>
-                📂 {prod.categorias?.nombre || "Sin Categoría"} <br/>
-                📏 {prod.unidades_medida?.nombre || "Unidad Estándar"}
-              </div>
-            </div>
+      {/* 2. NUEVA SECCIÓN: FILTROS Y BÚSQUEDA */}
+      <div style={{ marginBottom: "20px", paddingBottom: "10px", borderBottom: "1px solid #333" }}>
+        <h3 style={{margin:"0 0 10px 0", fontSize:"1.1em"}}>🔍 Buscar y Filtrar</h3>
+        
+        {/* Buscador de Texto */}
+        <input 
+          type="text" 
+          placeholder="🔎 Buscar por nombre..." 
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          style={{...inputStyle, marginBottom:"10px", background: "#000", border:"1px solid #444"}}
+        />
 
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize:"1.4em", fontWeight:"bold", color:"#4caf50" }}>S/ {prod.precio_venta}</div>
-              <div style={{ marginTop: "5px" }}>
-                <button onClick={() => cargarDatosParaEditar(prod)} style={{background:"#444", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px", marginRight:"5px"}}>✏️</button>
-                <button onClick={() => eliminarProducto(prod.id)} style={{background:"#d32f2f", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px"}}>🗑️</button>
-              </div>
-            </div>
-          </div>
+        {/* Filtros Desplegables */}
+        <div style={{ display: "flex", gap: "10px" }}>
+          <select 
+            value={filtroCategoria} 
+            onChange={(e) => setFiltroCategoria(e.target.value)} 
+            style={{...inputStyle, background: "#000", border:"1px solid #444"}}
+          >
+            <option value="">Todas las Categorías</option>
+            {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
 
-          {/* Parte Inferior: Kardex */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-            <button onClick={() => abrirModalKardex(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>- SALIDA</button>
-            <div style={{ textAlign: "center", minWidth: "70px" }}>
-              <div style={{ fontSize: "0.75em", color: "#888", fontWeight:"bold" }}>STOCK</div>
-              <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "white" }}>{prod.stock_actual}</div>
-            </div>
-            <button onClick={() => abrirModalKardex(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>+ ENTRADA</button>
-          </div>
-
+          <select 
+            value={filtroUnidad} 
+            onChange={(e) => setFiltroUnidad(e.target.value)} 
+            style={{...inputStyle, background: "#000", border:"1px solid #444"}}
+          >
+            <option value="">Todas las Medidas</option>
+            {unidades.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+          </select>
         </div>
-      ))}
+      </div>
 
-      {/* VENTANA MODAL FLOTANTE */}
+      {/* 3. LISTADO DE RESULTADOS (Usamos productosFiltrados) */}
+      <div style={{marginBottom: "10px", color: "#888", fontSize:"0.9em"}}>
+        Mostrando {productosFiltrados.length} productos
+      </div>
+
+      {productosFiltrados.length === 0 ? (
+        <div style={{textAlign:"center", color:"#666", padding:"20px"}}>No se encontraron productos con esos filtros.</div>
+      ) : (
+        productosFiltrados.map((prod) => (
+          <div key={prod.id} style={cardStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom:"10px", borderBottom:"1px solid #333", paddingBottom:"10px" }}>
+              <div>
+                <h3 style={{ margin: "0 0 5px 0", fontSize:"1.3em", color:"white" }}>{prod.nombre}</h3>
+                <div style={{ fontSize: "0.9em", color: "#aaa" }}>
+                  📂 {prod.categorias?.nombre || "Sin Categoría"} <br/>
+                  📏 {prod.unidades_medida?.nombre || "Unidad Estándar"}
+                </div>
+              </div>
+
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize:"1.4em", fontWeight:"bold", color:"#4caf50" }}>S/ {prod.precio_venta}</div>
+                <div style={{ marginTop: "5px" }}>
+                  <button onClick={() => cargarDatosParaEditar(prod)} style={{background:"#444", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px", marginRight:"5px"}}>✏️</button>
+                  <button onClick={() => eliminarProducto(prod.id)} style={{background:"#d32f2f", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px"}}>🗑️</button>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+              <button onClick={() => abrirModalKardex(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>- SALIDA</button>
+              <div style={{ textAlign: "center", minWidth: "70px" }}>
+                <div style={{ fontSize: "0.75em", color: "#888", fontWeight:"bold" }}>STOCK</div>
+                <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "white" }}>{prod.stock_actual}</div>
+              </div>
+              <button onClick={() => abrirModalKardex(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>+ ENTRADA</button>
+            </div>
+          </div>
+        ))
+      )}
+
+      {/* VENTANA MODAL (Sin cambios) */}
       {modalVisible && (
         <div style={overlayStyle}>
           <div style={modalBoxStyle}>
@@ -280,20 +337,14 @@ function App() {
                 onChange={(e) => setCantidadKardex(e.target.value)}
                 style={{...inputStyle, fontSize: "24px", textAlign: "center", width: "120px", fontWeight:"bold", color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", border: `2px solid ${tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}`}} 
               />
-              
               <div style={{display: "flex", gap: "10px", marginTop: "20px"}}>
-                <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#444", marginTop: 0}}>
-                  CANCELAR
-                </button>
-                <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0, color:"white"}}>
-                  CONFIRMAR
-                </button>
+                <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#444", marginTop: 0}}>CANCELAR</button>
+                <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0, color:"white"}}>CONFIRMAR</button>
               </div>
             </form>
           </div>
         </div>
       )}
-
     </div>
   );
 }
