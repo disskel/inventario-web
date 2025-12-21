@@ -72,30 +72,42 @@ function App() {
 
   // --- 3. LÓGICA DE KARDEX (MOVIMIENTOS) ---
   async function registrarMovimiento(producto, tipo) {
-    // Preguntamos la cantidad
+    // 1. Preguntamos la cantidad
     const cantidadStr = prompt(`¿Cuántas unidades van a ${tipo === "ENTRADA" ? "ENTRAR" : "SALIR"}?`);
-    if (!cantidadStr) return; // Si cancela, no hacemos nada
+    
+    // Si le dio a "Cancelar", no hacemos nada
+    if (cantidadStr === null) return; 
 
-    const cantidad = parseInt(cantidadStr);
-    if (isNaN(cantidad) || cantidad <= 0) {
-      alert("Por favor ingresa un número válido mayor a 0");
+    // 2. VALIDACIÓN ESTRICTA (El cambio importante)
+    // Explicación: /^\d+$/ significa "Desde el inicio hasta el fin, solo acepto dígitos numéricos"
+    const esSoloNumeros = /^\d+$/.test(cantidadStr); 
+
+    if (!esSoloNumeros) {
+      alert("⚠️ Error: Ingresaste letras o símbolos ('" + cantidadStr + "'). Por favor escribe SOLO números.");
       return;
     }
 
-    // Calculamos nuevo stock
+    const cantidad = parseInt(cantidadStr);
+
+    if (cantidad <= 0) {
+      alert("⚠️ Por favor ingresa una cantidad mayor a 0");
+      return;
+    }
+
+    // 3. Calculamos nuevo stock
     let nuevoStock = producto.stock_actual;
     if (tipo === "ENTRADA") {
       nuevoStock = nuevoStock + cantidad;
     } else { // SALIDA
       if (cantidad > producto.stock_actual) {
-        alert("¡No tienes suficiente stock para vender eso!");
+        alert("⚠️ ¡Stock insuficiente! Solo tienes " + producto.stock_actual + " unidades.");
         return;
       }
       nuevoStock = nuevoStock - cantidad;
     }
 
     // --- TRANSACCIÓN (Guardar en DB) ---
-    // 1. Guardar en historial
+    // 4. Guardar en historial
     const { error: errorHistorial } = await supabase.from("movimientos").insert({
       producto_id: producto.id,
       tipo_movimiento: tipo,
@@ -108,7 +120,7 @@ function App() {
       return;
     }
 
-    // 2. Actualizar producto
+    // 5. Actualizar producto
     const { error: errorProd } = await supabase
       .from("productos")
       .update({ stock_actual: nuevoStock })
@@ -117,10 +129,8 @@ function App() {
     if (errorProd) {
       alert("Error actualizando stock: " + errorProd.message);
     } else {
-      // Éxito: Actualizamos la lista visualmente
       fetchDatos();
-      // Feedback visual (Vibración en celular si soportado)
-      if (navigator.vibrate) navigator.vibrate(50);
+      if (navigator.vibrate) navigator.vibrate(50); // Vibrar si es celular
     }
   }
 
