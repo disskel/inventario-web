@@ -15,7 +15,7 @@ function App() {
   const [categorias, setCategorias] = useState([]);
   const [unidades, setUnidades] = useState([]);
   
-  // Form States (Crear/Editar)
+  // Form States
   const [nombre, setNombre] = useState("");
   const [precio, setPrecio] = useState("");
   const [stock, setStock] = useState("");
@@ -23,16 +23,20 @@ function App() {
   const [unidad, setUnidad] = useState("");
   const [idEditar, setIdEditar] = useState(null);
 
-  // Modal States
+  // Kardex States
   const [modalVisible, setModalVisible] = useState(false);
   const [prodKardex, setProdKardex] = useState(null);
   const [tipoKardex, setTipoKardex] = useState("");
   const [cantidadKardex, setCantidadKardex] = useState("");
 
-  // --- NUEVOS ESTADOS: FILTROS ---
+  // Filtros States
   const [busqueda, setBusqueda] = useState("");
   const [filtroCategoria, setFiltroCategoria] = useState("");
   const [filtroUnidad, setFiltroUnidad] = useState("");
+
+  // --- NUEVO: ESTADOS DE HISTORIAL ---
+  const [verHistorial, setVerHistorial] = useState(false);
+  const [listaMovimientos, setListaMovimientos] = useState([]);
 
   // --- 1. GESTIÓN DE SESIÓN ---
   useEffect(() => {
@@ -79,21 +83,27 @@ function App() {
     if (prods) setProductos(prods);
   }
 
-  // --- 3. LÓGICA DE FILTRADO (EL CEREBRO NUEVO) ---
-  // Esta variable calcula qué mostrar en tiempo real
-  const productosFiltrados = productos.filter((prod) => {
-    // 1. Filtro de Texto (Buscador)
-    const coincideTexto = prod.nombre.toLowerCase().includes(busqueda.toLowerCase());
-    
-    // 2. Filtro de Categoría (Si hay algo seleccionado, debe coincidir)
-    const coincideCat = filtroCategoria ? prod.categoria_id == filtroCategoria : true;
-    
-    // 3. Filtro de Unidad
-    const coincideUni = filtroUnidad ? prod.unidad_medida_id == filtroUnidad : true;
+  // --- NUEVO: FUNCIÓN PARA CARGAR HISTORIAL ---
+  async function abrirHistorial() {
+    setVerHistorial(true); // Mostrar ventana
+    // Traemos los movimientos y el nombre del producto asociado
+    const { data, error } = await supabase
+      .from("movimientos")
+      .select("*, productos(nombre)")
+      .order("fecha_movimiento", { ascending: false }) // Los más recientes primero
+      .limit(50); // Traer solo los últimos 50 para que sea rápido
 
+    if (data) setListaMovimientos(data);
+    if (error) alert("Error cargando historial");
+  }
+
+  // --- 3. LÓGICA DE FILTRADO ---
+  const productosFiltrados = productos.filter((prod) => {
+    const coincideTexto = prod.nombre.toLowerCase().includes(busqueda.toLowerCase());
+    const coincideCat = filtroCategoria ? prod.categoria_id == filtroCategoria : true;
+    const coincideUni = filtroUnidad ? prod.unidad_medida_id == filtroUnidad : true;
     return coincideTexto && coincideCat && coincideUni;
   });
-
 
   // --- 4. LÓGICA DE KARDEX (MODAL) ---
   function abrirModalKardex(producto, tipo) {
@@ -181,9 +191,8 @@ function App() {
   const inputStyle = { padding: "12px", margin: "5px 0", width: "100%", borderRadius: "8px", border: "1px solid #333", background: "#2c2c2c", color: "white", fontSize: "16px", boxSizing: "border-box" };
   const btnStyle = { padding: "12px", width: "100%", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "10px", fontSize: "16px" };
   const btnKardex = { padding: "10px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer", color: "white", flex: 1 };
-  
-  const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.85)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
-  const modalBoxStyle = { background: "#252525", padding: "25px", borderRadius: "15px", width: "85%", maxWidth: "350px", textAlign: "center", border: "1px solid #444" };
+  const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
+  const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "90%", maxWidth: "500px", maxHeight: "80vh", overflowY: "auto", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
 
@@ -207,12 +216,21 @@ function App() {
 
   return (
     <div style={containerStyle}>
+      {/* CABECERA */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
         <h2 style={{margin:0}}>📦 Mi Bodega</h2>
-        <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px"}}>Salir</button>
+        <div style={{display:"flex", gap:"10px"}}>
+          {/* BOTÓN HISTORIAL NUEVO */}
+          <button onClick={abrirHistorial} style={{padding:"8px 12px", background:"#0288d1", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>
+            📜 Historial
+          </button>
+          <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>
+            Salir
+          </button>
+        </div>
       </div>
       
-      {/* 1. FORMULARIO DE CREAR/EDITAR */}
+      {/* FORMULARIO */}
       <div style={{ background: "#252525", padding: "15px", borderRadius: "12px", marginBottom: "20px", borderLeft: idEditar ? "4px solid #fbc02d" : "4px solid #2196f3" }}>
         <h3 style={{ marginTop: 0 }}>{idEditar ? "✏️ Editar Producto" : "➕ Crear Nuevo"}</h3>
         <form onSubmit={manejarEnvio}>
@@ -238,105 +256,63 @@ function App() {
         </form>
       </div>
 
-      {/* 2. NUEVA SECCIÓN: FILTROS Y BÚSQUEDA */}
+      {/* FILTROS */}
       <div style={{ marginBottom: "20px", paddingBottom: "10px", borderBottom: "1px solid #333" }}>
         <h3 style={{margin:"0 0 10px 0", fontSize:"1.1em"}}>🔍 Buscar y Filtrar</h3>
-        
-        {/* Buscador de Texto */}
-        <input 
-          type="text" 
-          placeholder="🔎 Buscar por nombre..." 
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          style={{...inputStyle, marginBottom:"10px", background: "#000", border:"1px solid #444"}}
-        />
-
-        {/* Filtros Desplegables */}
+        <input type="text" placeholder="🔎 Buscar por nombre..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} style={{...inputStyle, marginBottom:"10px", background: "#000", border:"1px solid #444"}} />
         <div style={{ display: "flex", gap: "10px" }}>
-          <select 
-            value={filtroCategoria} 
-            onChange={(e) => setFiltroCategoria(e.target.value)} 
-            style={{...inputStyle, background: "#000", border:"1px solid #444"}}
-          >
+          <select value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)} style={{...inputStyle, background: "#000", border:"1px solid #444"}}>
             <option value="">Todas las Categorías</option>
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
-
-          <select 
-            value={filtroUnidad} 
-            onChange={(e) => setFiltroUnidad(e.target.value)} 
-            style={{...inputStyle, background: "#000", border:"1px solid #444"}}
-          >
+          <select value={filtroUnidad} onChange={(e) => setFiltroUnidad(e.target.value)} style={{...inputStyle, background: "#000", border:"1px solid #444"}}>
             <option value="">Todas las Medidas</option>
             {unidades.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
           </select>
         </div>
       </div>
 
-      {/* 3. LISTADO DE RESULTADOS (Usamos productosFiltrados) */}
-      <div style={{marginBottom: "10px", color: "#888", fontSize:"0.9em"}}>
-        Mostrando {productosFiltrados.length} productos
-      </div>
-
-      {productosFiltrados.length === 0 ? (
-        <div style={{textAlign:"center", color:"#666", padding:"20px"}}>No se encontraron productos con esos filtros.</div>
-      ) : (
-        productosFiltrados.map((prod) => (
-          <div key={prod.id} style={cardStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom:"10px", borderBottom:"1px solid #333", paddingBottom:"10px" }}>
-              <div>
-                <h3 style={{ margin: "0 0 5px 0", fontSize:"1.3em", color:"white" }}>{prod.nombre}</h3>
-                <div style={{ fontSize: "0.9em", color: "#aaa" }}>
-                  📂 {prod.categorias?.nombre || "Sin Categoría"} <br/>
-                  📏 {prod.unidades_medida?.nombre || "Unidad Estándar"}
-                </div>
-              </div>
-
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize:"1.4em", fontWeight:"bold", color:"#4caf50" }}>S/ {prod.precio_venta}</div>
-                <div style={{ marginTop: "5px" }}>
-                  <button onClick={() => cargarDatosParaEditar(prod)} style={{background:"#444", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px", marginRight:"5px"}}>✏️</button>
-                  <button onClick={() => eliminarProducto(prod.id)} style={{background:"#d32f2f", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px"}}>🗑️</button>
-                </div>
+      {/* LISTADO */}
+      <div style={{marginBottom: "10px", color: "#888", fontSize:"0.9em"}}>Mostrando {productosFiltrados.length} productos</div>
+      {productosFiltrados.map((prod) => (
+        <div key={prod.id} style={cardStyle}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom:"10px", borderBottom:"1px solid #333", paddingBottom:"10px" }}>
+            <div>
+              <h3 style={{ margin: "0 0 5px 0", fontSize:"1.3em", color:"white" }}>{prod.nombre}</h3>
+              <div style={{ fontSize: "0.9em", color: "#aaa" }}>
+                📂 {prod.categorias?.nombre || "Sin Categoría"} <br/>
+                📏 {prod.unidades_medida?.nombre || "Unidad Estándar"}
               </div>
             </div>
-
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-              <button onClick={() => abrirModalKardex(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>- SALIDA</button>
-              <div style={{ textAlign: "center", minWidth: "70px" }}>
-                <div style={{ fontSize: "0.75em", color: "#888", fontWeight:"bold" }}>STOCK</div>
-                <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "white" }}>{prod.stock_actual}</div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize:"1.4em", fontWeight:"bold", color:"#4caf50" }}>S/ {prod.precio_venta}</div>
+              <div style={{ marginTop: "5px" }}>
+                <button onClick={() => cargarDatosParaEditar(prod)} style={{background:"#444", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px", marginRight:"5px"}}>✏️</button>
+                <button onClick={() => eliminarProducto(prod.id)} style={{background:"#d32f2f", border:"none", cursor:"pointer", fontSize:"1em", padding:"5px 10px", borderRadius:"5px"}}>🗑️</button>
               </div>
-              <button onClick={() => abrirModalKardex(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>+ ENTRADA</button>
             </div>
           </div>
-        ))
-      )}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+            <button onClick={() => abrirModalKardex(prod, 'SALIDA')} style={{...btnKardex, background: "#ef5350"}}>- SALIDA</button>
+            <div style={{ textAlign: "center", minWidth: "70px" }}>
+              <div style={{ fontSize: "0.75em", color: "#888", fontWeight:"bold" }}>STOCK</div>
+              <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "white" }}>{prod.stock_actual}</div>
+            </div>
+            <button onClick={() => abrirModalKardex(prod, 'ENTRADA')} style={{...btnKardex, background: "#66bb6a"}}>+ ENTRADA</button>
+          </div>
+        </div>
+      ))}
 
-      {/* VENTANA MODAL (Sin cambios) */}
+      {/* MODAL KARDEX (ENTRADA/SALIDA) */}
       {modalVisible && (
         <div style={overlayStyle}>
-          <div style={modalBoxStyle}>
+          <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
             <h2 style={{marginTop: 0, color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}}>
               {tipoKardex === "ENTRADA" ? "📥 Registrar Entrada" : "📤 Registrar Salida"}
             </h2>
-            <p style={{color: "#e0e0e0", marginBottom: "15px", fontSize:"1.1em"}}>
-              Producto: <strong>{prodKardex?.nombre}</strong>
-            </p>
-            <p style={{color: "#aaa", fontSize:"0.9em"}}>
-              Stock actual: {prodKardex?.stock_actual} | Precio: S/ {prodKardex?.precio_venta}
-            </p>
-            
+            <p style={{color: "#e0e0e0", marginBottom: "15px", fontSize:"1.1em"}}>Producto: <strong>{prodKardex?.nombre}</strong></p>
             <form onSubmit={confirmarMovimiento}>
-              <input 
-                type="number" 
-                inputMode="numeric" 
-                autoFocus 
-                placeholder="Cantidad"
-                value={cantidadKardex}
-                onChange={(e) => setCantidadKardex(e.target.value)}
-                style={{...inputStyle, fontSize: "24px", textAlign: "center", width: "120px", fontWeight:"bold", color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", border: `2px solid ${tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}`}} 
-              />
+              <input type="number" inputMode="numeric" autoFocus placeholder="Cantidad" value={cantidadKardex} onChange={(e) => setCantidadKardex(e.target.value)} style={{...inputStyle, fontSize: "24px", textAlign: "center", width: "120px", fontWeight:"bold", color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", border: `2px solid ${tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}`}} />
               <div style={{display: "flex", gap: "10px", marginTop: "20px"}}>
                 <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#444", marginTop: 0}}>CANCELAR</button>
                 <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0, color:"white"}}>CONFIRMAR</button>
@@ -345,6 +321,59 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* --- MODAL DE HISTORIAL (AUDITORÍA) --- */}
+      {verHistorial && (
+        <div style={overlayStyle}>
+          <div style={modalBoxStyle}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
+              <h2 style={{margin:0, color: "#0288d1"}}>📜 Historial de Movimientos</h2>
+              <button onClick={() => setVerHistorial(false)} style={{background:"transparent", border:"none", color:"white", fontSize:"1.5em", cursor:"pointer"}}>✖️</button>
+            </div>
+
+            {listaMovimientos.length === 0 ? (
+               <p style={{textAlign:"center", color:"#aaa"}}>No hay movimientos registrados.</p>
+            ) : (
+              <table style={{width:"100%", borderCollapse:"collapse", fontSize:"0.9em"}}>
+                <thead>
+                  <tr style={{borderBottom:"1px solid #555", color:"#aaa"}}>
+                    <th style={{padding:"10px", textAlign:"left"}}>Fecha</th>
+                    <th style={{padding:"10px", textAlign:"left"}}>Producto</th>
+                    <th style={{padding:"10px", textAlign:"center"}}>Tipo</th>
+                    <th style={{padding:"10px", textAlign:"right"}}>Cant.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listaMovimientos.map((mov) => (
+                    <tr key={mov.id} style={{borderBottom:"1px solid #333"}}>
+                      <td style={{padding:"10px", color:"#ccc"}}>
+                        {new Date(mov.fecha_movimiento).toLocaleDateString()} <br/>
+                        <small>{new Date(mov.fecha_movimiento).toLocaleTimeString()}</small>
+                      </td>
+                      <td style={{padding:"10px"}}>{mov.productos?.nombre || "Producto borrado"}</td>
+                      <td style={{padding:"10px", textAlign:"center"}}>
+                        <span style={{
+                          background: mov.tipo_movimiento === "ENTRADA" ? "rgba(102, 187, 106, 0.2)" : "rgba(239, 83, 80, 0.2)",
+                          color: mov.tipo_movimiento === "ENTRADA" ? "#66bb6a" : "#ef5350",
+                          padding: "3px 8px", borderRadius: "10px", fontSize: "0.85em", fontWeight: "bold"
+                        }}>
+                          {mov.tipo_movimiento}
+                        </span>
+                      </td>
+                      <td style={{padding:"10px", textAlign:"right", fontWeight:"bold", fontSize:"1.1em"}}>
+                        {mov.cantidad}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            
+            <button onClick={() => setVerHistorial(false)} style={{...btnStyle, background: "#444", marginTop: "20px"}}>CERRAR</button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
