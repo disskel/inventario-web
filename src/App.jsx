@@ -37,9 +37,16 @@ function App() {
   const [verHistorial, setVerHistorial] = useState(false);
   const [listaMovimientos, setListaMovimientos] = useState([]);
   const [historialPagina, setHistorialPagina] = useState(1);
-  const [totalPaginas, setTotalPaginas] = useState(1); // <--- NUEVO ESTADO
+  const [totalPaginas, setTotalPaginas] = useState(1);
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+
+  // --- NUEVO: ESTADOS PARA EL REPORTE ---
+  const [verReporte, setVerReporte] = useState(false);
+  const [repFechaIni, setRepFechaIni] = useState("");
+  const [repFechaFin, setRepFechaFin] = useState("");
+  const [datosReporte, setDatosReporte] = useState([]);
+  const [cargandoReporte, setCargandoReporte] = useState(false);
 
   // Filtros
   const [busqueda, setBusqueda] = useState("");
@@ -112,15 +119,13 @@ function App() {
 
     let query = supabase
       .from("movimientos")
-      .select("*, productos(nombre)", { count: "exact" }) // Pedimos el conteo exacto
+      .select("*, productos(nombre)", { count: "exact" })
       .order("fecha_movimiento", { ascending: false })
       .range(desde, hasta);
     
-    // Aplicar filtros de fecha (igual que antes)
     if (fechaInicio) query = query.gte("fecha_movimiento", new Date(`${fechaInicio}T00:00:00`).toISOString());
     if (fechaFin) query = query.lte("fecha_movimiento", new Date(`${fechaFin}T23:59:59.999`).toISOString());
 
-    // DESTRUCTURAMOS TAMBIÉN 'count'
     const { data, error, count } = await query; 
 
     if (error) {
@@ -128,10 +133,6 @@ function App() {
     } else {
       setListaMovimientos(data);
       setHistorialPagina(pagina);
-      
-      // --- CÁLCULO MATEMÁTICO ---
-      // Total de items / 10 items por página. (Math.ceil redondea hacia arriba)
-      // Ejemplo: 21 items / 10 = 2.1 -> Redondea a 3 páginas.
       const paginasCalculadas = count === 0 ? 1 : Math.ceil(count / ITEMS_POR_PAGINA);
       setTotalPaginas(paginasCalculadas);
     }
@@ -143,7 +144,94 @@ function App() {
     cargarHistorial(1);
   }
 
-  // --- 5. KARDEX (MOVIMIENTOS MANUALES) ---
+  // --- 5. LÓGICA DEL REPORTE KARDEX (NUEVO) ---
+  async function generarReporte() {
+    if (!repFechaIni || !repFechaFin) {
+        alert("Por favor selecciona ambas fechas.");
+        return;
+    }
+    setCargandoReporte(true);
+
+    // 1. Traer TODOS los movimientos hasta la fecha fin (para calcular el pasado)
+    const fechaFinUTC = new Date(`${repFechaFin}T23:59:59.999`).toISOString();
+    const fechaIniUTC = new Date(`${repFechaIni}T00:00:00`).toISOString();
+
+    const { data: movimientos, error } = await supabase
+        .from("movimientos")
+        .select("producto_id, tipo_movimiento, cantidad, fecha_movimiento, nombre_producto_historico")
+        .lte("fecha_movimiento", fechaFinUTC); // Traemos todo hasta el final del reporte
+
+    if (error) {
+        alert("Error generando reporte: " + error.message);
+        setCargandoReporte(false);
+        return;
+    }
+
+    // 2. Procesar datos en memoria (Agrupar por producto)
+    const reporteMap = {};
+
+    movimientos.forEach(mov => {
+        const idProd = mov.producto_id || "BORRADO_" + mov.nombre_producto_historico;
+        const nombreProd = mov.nombre_producto_historico || "Producto Desconocido";
+
+        if (!reporteMap[idProd]) {
+            reporteMap[idProd] = {
+                id: idProd,
+                nombre: nombreProd,
+                stockInicial: 0,
+                entradas: 0,
+                salidas: 0,
+                stockFinal: 0
+            };
+        }
+
+        const cantidad = mov.cantidad;
+        const esEntrada = mov.tipo_movimiento === "ENTRADA";
+
+        // Lógica de Tiempos
+        if (mov.fecha_movimiento < fechaIniUTC) {
+            // Es un movimiento del PASADO (Antes del reporte) -> Afecta al Stock Inicial
+            if (esEntrada) reporteMap[idProd].stockInicial += cantidad;
+            else reporteMap[idProd].stockInicial -= cantidad;
+        } else {
+            // Es un movimiento DENTRO del rango -> Suma a Entradas/Salidas
+            if (esEntrada) reporteMap[idProd].entradas += cantidad;
+            else reporteMap[idProd].salidas += cantidad;
+        }
+    });
+
+    // 3. Calcular Stock Final para cada uno
+    const resultado = Object.values(reporteMap).map(item => {
+        item.stockFinal = item.stockInicial + item.entradas - item.salidas;
+        return item;
+    });
+
+    setDatosReporte(resultado);
+    setCargandoReporte(false);
+  }
+
+  function exportarExcel() {
+    if (datosReporte.length === 0) return;
+
+    // Crear contenido CSV
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Producto,Stock Inicial,Entradas,Salidas,Stock Final\n"; // Cabecera
+
+    datosReporte.forEach(row => {
+        csvContent += `"${row.nombre}",${row.stockInicial},${row.entradas},${row.salidas},${row.stockFinal}\n`;
+    });
+
+    // Descargar
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Reporte_Kardex_${repFechaIni}_al_${repFechaFin}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  // --- 6. KARDEX (MOVIMIENTOS MANUALES) ---
   async function confirmarMovimiento(e) {
     e.preventDefault();
     const esSoloNumeros = /^\d+$/.test(cantidadKardex);
@@ -158,14 +246,13 @@ function App() {
       nuevoStock -= cantidad;
     }
 
-    // REGISTRO EL MOVIMIENTO CON MOTIVO 'Manual' y FOTO del nombre
     const { error: errorHist } = await supabase.from("movimientos").insert({
       producto_id: prodKardex.id,
       tipo_movimiento: tipoKardex,
       cantidad: cantidad,
       usuario_id: session.user.id,
       nombre_producto_historico: prodKardex.nombre,
-      motivo: "Manual" // <--- ETIQUETA NUEVA
+      motivo: "Manual"
     });
 
     if (errorHist) { alert("Error: " + errorHist.message); return; }
@@ -174,17 +261,12 @@ function App() {
     if (!errorProd) { setModalVisible(false); fetchDatos(); if (navigator.vibrate) navigator.vibrate(50); }
   }
 
-  // --- 6. CRUD PRODUCTOS (Con Lógica de Entrada Inicial) ---
+  // --- 7. CRUD PRODUCTOS ---
   async function manejarEnvio(e) {
     e.preventDefault();
     if (!nombre || !precio || !categoria) { alert("Faltan datos"); return; }
-    
     const payload = { nombre, precio_venta: precio, categoria_id: categoria, unidad_medida_id: unidad };
-    // OJO: Si es nuevo, capturamos el stock para usarlo después, pero NO lo guardamos en payload si vamos a hacer movimiento
-    // Estrategia: Guardamos con stock 0 (o el que sea) y luego insertamos movimiento.
-    // Simplificación: Guardamos con el stock directo en productos, Y ADEMÁS creamos el registro en movimientos.
-    
-    if (!idEditar) payload.stock_actual = stock; // Guardamos el stock inicial en el producto
+    if (!idEditar) payload.stock_actual = stock; 
 
     let error;
     let nuevoProductoId = null;
@@ -193,8 +275,7 @@ function App() {
       const res = await supabase.from("productos").update(payload).eq("id", idEditar);
       error = res.error;
     } else {
-      // ES NUEVO
-      const res = await supabase.from("productos").insert(payload).select(); // .select() devuelve el dato creado
+      const res = await supabase.from("productos").insert(payload).select();
       error = res.error;
       if (res.data) nuevoProductoId = res.data[0].id;
     }
@@ -202,8 +283,6 @@ function App() {
     if (error) {
       alert(error.message);
     } else {
-      // --- LÓGICA DE AUDITORÍA PARA STOCK INICIAL ---
-      // Si es nuevo Y tiene stock > 0, creamos el movimiento automático
       if (!idEditar && stock > 0 && nuevoProductoId) {
          await supabase.from("movimientos").insert({
             producto_id: nuevoProductoId,
@@ -211,16 +290,14 @@ function App() {
             cantidad: stock,
             usuario_id: session.user.id,
             nombre_producto_historico: nombre,
-            motivo: "Stock Inicial" // <--- ETIQUETA IMPORTANTE
+            motivo: "Stock Inicial"
          });
       }
-
-      cancelarEdicion(); 
-      fetchDatos();
+      cancelarEdicion(); fetchDatos();
     }
   }
 
-  // ... (Resto de funciones auxiliares iguales: cargarDatosParaEditar, eliminarProducto, cancelarEdicion)
+  // ... (Funciones auxiliares)
   function cargarDatosParaEditar(p) {
     setNombre(p.nombre); setPrecio(p.precio_venta); setStock(p.stock_actual);
     setCategoria(p.categoria_id); setUnidad(p.unidad_medida_id); setIdEditar(p.id);
@@ -255,21 +332,25 @@ function App() {
   const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "95%", maxWidth: "500px", maxHeight: "90vh", overflowY: "auto", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
-  if (!session) return (<div style={{color:"white", textAlign:"center", marginTop:"50px"}}>Por favor recarga la página.</div>); // Simplificado por espacio
+  if (!session) return (<div style={{color:"white", textAlign:"center", marginTop:"50px"}}>Por favor recarga la página.</div>);
 
   return (
     <div style={containerStyle}>
-      {/* CABECERA (Igual) */}
+      {/* CABECERA */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
         <h2 style={{margin:0}}>📦 Mi Bodega</h2>
         <div style={{display:"flex", gap:"5px"}}>
           <button onClick={() => setVerConfig(true)} style={{padding:"8px 12px", background:"#555", color:"white", border:"none", borderRadius:"8px"}}>⚙️</button>
+          
+          {/* NUEVO BOTÓN REPORTE */}
+          <button onClick={() => setVerReporte(true)} style={{padding:"8px 12px", background:"#7b1fa2", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>📊</button>
+          
           <button onClick={abrirModalHistorial} style={{padding:"8px 12px", background:"#0288d1", color:"white", border:"none", borderRadius:"8px"}}>📜</button>
           <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px"}}>Salir</button>
         </div>
       </div>
       
-      {/* FORMULARIO (Igual) */}
+      {/* FORMULARIO */}
       <div style={{ background: "#252525", padding: "15px", borderRadius: "12px", marginBottom: "20px", borderLeft: idEditar ? "4px solid #fbc02d" : "4px solid #2196f3" }}>
         <h3 style={{ marginTop: 0 }}>{idEditar ? "✏️ Editar" : "➕ Nuevo Producto"}</h3>
         <form onSubmit={manejarEnvio}>
@@ -293,8 +374,7 @@ function App() {
         </form>
       </div>
 
-      {/* FILTROS Y LISTA (Igual) */}
-      {/* ... (Omitido por brevedad, es igual al anterior, incluye el input de búsqueda y los selects) ... */}
+      {/* FILTROS Y LISTA */}
       <div style={{ marginBottom: "20px", paddingBottom: "10px", borderBottom: "1px solid #333" }}>
         <input type="text" placeholder="🔎 Buscar..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} style={{...inputStyle, marginBottom:"10px", background: "#000", border:"1px solid #444"}} />
         <div style={{ display: "flex", gap: "10px" }}>
@@ -302,7 +382,6 @@ function App() {
                 <option value="">Todas las Categorías</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
-            {/* ... select unidades ... */}
             <select value={filtroUnidad} onChange={(e) => setFiltroUnidad(e.target.value)} style={{...inputStyle, background: "#000", border:"1px solid #444"}}>
                 <option value="">Todas las Medidas</option>
                 {unidades.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
@@ -337,10 +416,71 @@ function App() {
         </div>
       ))}
 
-      {/* MODAL CONFIG (Igual al anterior) */}
+      {/* --- MODAL NUEVO: REPORTE GERENCIAL --- */}
+      {verReporte && (
+        <div style={overlayStyle}>
+          <div style={{...modalBoxStyle, width: "95%", maxWidth: "800px"}}>
+             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"15px"}}>
+              <h2 style={{margin:0, color: "#7b1fa2"}}>📊 Reporte Kardex</h2>
+              <button onClick={() => setVerReporte(false)} style={{background:"transparent", border:"none", color:"white", fontSize:"1.5em", cursor:"pointer"}}>✖️</button>
+            </div>
+
+            <div style={{background:"#333", padding:"15px", borderRadius:"8px", marginBottom:"15px", display:"flex", flexWrap:"wrap", gap:"15px", alignItems:"flex-end"}}>
+               <div style={{flex:1}}>
+                 <label style={{color:"#aaa", display:"block", marginBottom:"5px"}}>Fecha Inicio:</label>
+                 <input type="date" value={repFechaIni} onChange={e => setRepFechaIni(e.target.value)} style={{...inputStyle, margin:0, padding:"8px"}} />
+               </div>
+               <div style={{flex:1}}>
+                 <label style={{color:"#aaa", display:"block", marginBottom:"5px"}}>Fecha Fin:</label>
+                 <input type="date" value={repFechaFin} onChange={e => setRepFechaFin(e.target.value)} style={{...inputStyle, margin:0, padding:"8px"}} />
+               </div>
+               <button onClick={generarReporte} disabled={cargandoReporte} style={{...btnStyle, width:"auto", background:"#7b1fa2", marginTop:0, padding:"10px 20px"}}>
+                 {cargandoReporte ? "Calculando..." : "GENERAR"}
+               </button>
+               {datosReporte.length > 0 && (
+                   <button onClick={exportarExcel} style={{...btnStyle, width:"auto", background:"#2e7d32", marginTop:0, padding:"10px 20px"}}>
+                     📥 EXCEL
+                   </button>
+               )}
+            </div>
+
+            {/* TABLA DE REPORTE */}
+            <div style={{overflowX: "auto"}}>
+                {datosReporte.length === 0 ? (
+                    <p style={{textAlign:"center", color:"#666"}}>Selecciona un rango y dale a Generar.</p>
+                ) : (
+                    <table style={{width:"100%", borderCollapse:"collapse", fontSize:"0.9em", minWidth:"600px"}}>
+                        <thead style={{background:"#444", color:"white"}}>
+                            <tr>
+                                <th style={{padding:"10px", textAlign:"left"}}>Producto</th>
+                                <th style={{padding:"10px", textAlign:"center"}}>Stock Inicial</th>
+                                <th style={{padding:"10px", textAlign:"center", color:"#66bb6a"}}>Entradas</th>
+                                <th style={{padding:"10px", textAlign:"center", color:"#ef5350"}}>Salidas</th>
+                                <th style={{padding:"10px", textAlign:"center", fontWeight:"bold"}}>Stock Final</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {datosReporte.map((row) => (
+                                <tr key={row.id} style={{borderBottom:"1px solid #333"}}>
+                                    <td style={{padding:"10px"}}>{row.nombre}</td>
+                                    <td style={{padding:"10px", textAlign:"center", color:"#aaa"}}>{row.stockInicial}</td>
+                                    <td style={{padding:"10px", textAlign:"center", color:"#66bb6a", fontWeight:"bold"}}>{row.entradas}</td>
+                                    <td style={{padding:"10px", textAlign:"center", color:"#ef5350", fontWeight:"bold"}}>{row.salidas}</td>
+                                    <td style={{padding:"10px", textAlign:"center", color:"white", fontWeight:"bold", fontSize:"1.1em"}}>{row.stockFinal}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIG (Igual) */}
       {verConfig && (
         <div style={overlayStyle}>
-           {/* ... Mismo código de configuración ... */}
            <div style={modalBoxStyle}>
               <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
                  <h2 style={{margin:0, color: "#fff"}}>⚙️ Configuración</h2>
@@ -366,7 +506,7 @@ function App() {
         </div>
       )}
 
-      {/* MODAL KARDEX (Igual al anterior) */}
+      {/* MODAL KARDEX (Igual) */}
       {modalVisible && (
         <div style={overlayStyle}>
            <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
@@ -383,7 +523,7 @@ function App() {
         </div>
       )}
 
-      {/* --- MODAL HISTORIAL MEJORADO --- */}
+      {/* MODAL HISTORIAL (Igual) */}
       {verHistorial && (
         <div style={overlayStyle}>
           <div style={modalBoxStyle}>
@@ -391,7 +531,6 @@ function App() {
               <h2 style={{margin:0, color: "#0288d1"}}>📜 Historial</h2>
               <button onClick={() => setVerHistorial(false)} style={{background:"transparent", border:"none", color:"white", fontSize:"1.5em", cursor:"pointer"}}>✖️</button>
             </div>
-            {/* Filtros fecha igual */}
             <div style={{background:"#333", padding:"10px", borderRadius:"8px", marginBottom:"15px", display:"flex", gap:"10px", flexDirection:"column"}}>
                <div style={{display:"flex", gap:"10px", alignItems:"center"}}>
                  <label style={{color:"#aaa", width:"50px"}}>Desde:</label>
@@ -404,7 +543,6 @@ function App() {
                <button onClick={() => cargarHistorial(1)} style={{...btnStyle, background:"#555", marginTop:"5px", padding:"8px"}}>🔎 FILTRAR</button>
             </div>
 
-            {/* TABLA MEJORADA CON ETIQUETAS */}
             {listaMovimientos.length === 0 ? <p style={{textAlign:"center", color:"#aaa"}}>No hay movimientos.</p> : (
               <table style={{width:"100%", borderCollapse:"collapse", fontSize:"0.9em"}}>
                 <tbody>
@@ -412,29 +550,21 @@ function App() {
                     <tr key={mov.id} style={{borderBottom:"1px solid #333"}}>
                       <td style={{padding:"8px"}}>
                         <div style={{fontWeight:"bold", color:"white", display:"flex", alignItems:"center", gap:"5px"}}>
-                           {/* Nombre del Producto */}
                            {mov.productos?.nombre || mov.nombre_producto_historico || "Desconocido"}
-                           
-                           {/* ETIQUETA ELIMINADO: Si no hay mov.productos (enlace vivo), está borrado */}
                            {!mov.productos && (
                              <span style={{fontSize:"0.7em", background:"#d32f2f", color:"white", padding:"1px 4px", borderRadius:"4px"}}>🗑️ Eliminado</span>
                            )}
-
-                           {/* ETIQUETA NUEVO: Si el motivo es Stock Inicial */}
                            {mov.motivo === "Stock Inicial" && (
                              <span style={{fontSize:"0.7em", background:"#0288d1", color:"white", padding:"1px 4px", borderRadius:"4px"}}>✨ Nuevo</span>
                            )}
                         </div>
-                        
                         <div style={{fontSize:"0.8em", color:"#888"}}>
                             {new Date(mov.fecha_movimiento).toLocaleDateString()} {new Date(mov.fecha_movimiento).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </div>
-                        
                         <div style={{marginTop:"2px"}}>
                             <span style={{color: mov.tipo_movimiento === "ENTRADA" ? "#66bb6a" : "#ef5350", fontSize: "0.8em", fontWeight: "bold", marginRight:"10px"}}>
                                 {mov.tipo_movimiento}
                             </span>
-                            {/* Mostrar motivo si no es Manual */}
                             {mov.motivo && mov.motivo !== "Manual" && (
                                 <span style={{fontSize:"0.8em", color:"#aaa", fontStyle:"italic"}}>{mov.motivo}</span>
                             )}
@@ -446,28 +576,10 @@ function App() {
                 </tbody>
               </table>
             )}
-            {/* Paginación igual */}
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:"20px", paddingTop:"10px", borderTop:"1px solid #444"}}>
-                <button 
-                    onClick={() => cargarHistorial(historialPagina - 1)} 
-                    disabled={historialPagina === 1} 
-                    style={{background: historialPagina === 1 ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina === 1 ? "not-allowed" : "pointer"}}
-                >
-                    ⬅ Ant.
-                </button>
-                
-                {/* --- CAMBIO AQUÍ: Agregamos "de {totalPaginas}" --- */}
-                <span style={{color:"#aaa"}}>
-                    Página <strong>{historialPagina}</strong> de <strong>{totalPaginas}</strong>
-                </span>
-
-                <button 
-                    onClick={() => cargarHistorial(historialPagina + 1)} 
-                    disabled={historialPagina >= totalPaginas} // Bloquear si ya estamos en la última
-                    style={{background: historialPagina >= totalPaginas ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina >= totalPaginas ? "not-allowed" : "pointer"}}
-                >
-                    Sig. ➡
-                </button>
+                <button onClick={() => cargarHistorial(historialPagina - 1)} disabled={historialPagina === 1} style={{background: historialPagina === 1 ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina === 1 ? "not-allowed" : "pointer"}}>⬅ Ant.</button>
+                <span style={{color:"#aaa"}}>Página <strong>{historialPagina}</strong> de <strong>{totalPaginas}</strong></span>
+                <button onClick={() => cargarHistorial(historialPagina + 1)} disabled={historialPagina >= totalPaginas} style={{background: historialPagina >= totalPaginas ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina >= totalPaginas ? "not-allowed" : "pointer"}}>Sig. ➡</button>
             </div>
           </div>
         </div>
