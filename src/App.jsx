@@ -213,16 +213,21 @@ function App() {
   function exportarExcel() {
     if (datosReporte.length === 0) return;
 
-    // Crear contenido CSV
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Producto,Stock Inicial,Entradas,Salidas,Stock Final\n"; // Cabecera
+    // 1. Usamos punto y coma (;) que es el estándar para Excel en Perú/Latam
+    // 2. Agregamos \uFEFF al inicio para que reconozca tildes y ñ (UTF-8 BOM)
+    let csvContent = "\uFEFF"; 
+    
+    // CABECERA (Separada por puntos y coma)
+    csvContent += "Producto;Stock Inicial;Entradas;Salidas;Stock Final\n"; 
 
     datosReporte.forEach(row => {
-        csvContent += `"${row.nombre}",${row.stockInicial},${row.entradas},${row.salidas},${row.stockFinal}\n`;
+        // CUERPO (Separado por puntos y coma)
+        // Encerramos el nombre en comillas por si el nombre tiene puntos y coma adentro
+        csvContent += `"${row.nombre}";${row.stockInicial};${row.entradas};${row.salidas};${row.stockFinal}\n`;
     });
 
     // Descargar
-    const encodedUri = encodeURI(csvContent);
+    const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `Reporte_Kardex_${repFechaIni}_al_${repFechaFin}.csv`);
