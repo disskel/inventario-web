@@ -191,22 +191,31 @@ function App() {
     e.preventDefault();
     const esSoloNumeros = /^\d+$/.test(cantidadKardex);
     if (!esSoloNumeros) { alert("⚠️ Error: Escribe SOLO números enteros."); return; }
+    
     const cantidad = parseInt(cantidadKardex);
     if (cantidad <= 0) { alert("⚠️ La cantidad debe ser mayor a 0."); return; }
+
     let nuevoStock = prodKardex.stock_actual;
-    if (tipoKardex === "ENTRADA") nuevoStock = nuevoStock + cantidad;
-    else {
+    if (tipoKardex === "ENTRADA") {
+      nuevoStock = nuevoStock + cantidad;
+    } else {
       if (cantidad > prodKardex.stock_actual) { alert(`⚠️ Stock insuficiente.`); return; }
       nuevoStock = nuevoStock - cantidad;
     }
+
+    // --- CAMBIO AQUÍ: Guardamos también el nombre textual ---
     const { error: errorHist } = await supabase.from("movimientos").insert({
       producto_id: prodKardex.id,
       tipo_movimiento: tipoKardex,
       cantidad: cantidad,
-      usuario_id: session.user.id
+      usuario_id: session.user.id,
+      nombre_producto_historico: prodKardex.nombre // <--- LA FOTO
     });
+
     if (errorHist) { alert("Error: " + errorHist.message); return; }
+
     const { error: errorProd } = await supabase.from("productos").update({ stock_actual: nuevoStock }).eq("id", prodKardex.id);
+
     if (!errorProd) {
       setModalVisible(false);
       fetchDatos();
@@ -446,10 +455,18 @@ function App() {
                   {listaMovimientos.map((mov) => (
                     <tr key={mov.id} style={{borderBottom:"1px solid #333"}}>
                       <td style={{padding:"8px"}}>
-                        <div style={{fontWeight:"bold", color:"white"}}>{mov.productos?.nombre || "Borrado"}</div>
-                        <div style={{fontSize:"0.8em", color:"#888"}}>{new Date(mov.fecha_movimiento).toLocaleDateString()} {new Date(mov.fecha_movimiento).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                        <span style={{color: mov.tipo_movimiento === "ENTRADA" ? "#66bb6a" : "#ef5350", fontSize: "0.8em", fontWeight: "bold"}}>{mov.tipo_movimiento}</span>
-                      </td>
+                          {/* LÓGICA INTELIGENTE: Si existe el producto vivo, úsalo. Si no, usa el histórico. Si no, "Borrado". */}
+                          <div style={{fontWeight:"bold", color:"white"}}>
+                            {mov.productos?.nombre || mov.nombre_producto_historico || "Producto Eliminado"}
+                          </div>
+  
+                          <div style={{fontSize:"0.8em", color:"#888"}}>
+                            {new Date(mov.fecha_movimiento).toLocaleDateString()} {new Date(mov.fecha_movimiento).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </div>
+                          <span style={{color: mov.tipo_movimiento === "ENTRADA" ? "#66bb6a" : "#ef5350", fontSize: "0.8em", fontWeight: "bold"}}>
+                            {mov.tipo_movimiento}
+                          </span>
+                        </td>
                       <td style={{padding:"8px", textAlign:"right", fontWeight:"bold", fontSize:"1.2em", color:"white"}}>{mov.cantidad}</td>
                     </tr>
                   ))}
