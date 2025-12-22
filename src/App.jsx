@@ -37,6 +37,7 @@ function App() {
   const [verHistorial, setVerHistorial] = useState(false);
   const [listaMovimientos, setListaMovimientos] = useState([]);
   const [historialPagina, setHistorialPagina] = useState(1);
+  const [totalPaginas, setTotalPaginas] = useState(1); // <--- NUEVO ESTADO
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
 
@@ -108,14 +109,32 @@ function App() {
   async function cargarHistorial(pagina = 1) {
     const desde = (pagina - 1) * ITEMS_POR_PAGINA;
     const hasta = desde + ITEMS_POR_PAGINA - 1;
-    let query = supabase.from("movimientos").select("*, productos(nombre)", { count: "exact" }).order("fecha_movimiento", { ascending: false }).range(desde, hasta);
+
+    let query = supabase
+      .from("movimientos")
+      .select("*, productos(nombre)", { count: "exact" }) // Pedimos el conteo exacto
+      .order("fecha_movimiento", { ascending: false })
+      .range(desde, hasta);
     
+    // Aplicar filtros de fecha (igual que antes)
     if (fechaInicio) query = query.gte("fecha_movimiento", new Date(`${fechaInicio}T00:00:00`).toISOString());
     if (fechaFin) query = query.lte("fecha_movimiento", new Date(`${fechaFin}T23:59:59.999`).toISOString());
 
-    const { data, error } = await query;
-    if (error) alert("Error cargando historial");
-    else { setListaMovimientos(data); setHistorialPagina(pagina); }
+    // DESTRUCTURAMOS TAMBIÉN 'count'
+    const { data, error, count } = await query; 
+
+    if (error) {
+      alert("Error cargando historial");
+    } else {
+      setListaMovimientos(data);
+      setHistorialPagina(pagina);
+      
+      // --- CÁLCULO MATEMÁTICO ---
+      // Total de items / 10 items por página. (Math.ceil redondea hacia arriba)
+      // Ejemplo: 21 items / 10 = 2.1 -> Redondea a 3 páginas.
+      const paginasCalculadas = count === 0 ? 1 : Math.ceil(count / ITEMS_POR_PAGINA);
+      setTotalPaginas(paginasCalculadas);
+    }
   }
 
   function abrirModalHistorial() {
@@ -429,9 +448,26 @@ function App() {
             )}
             {/* Paginación igual */}
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:"20px", paddingTop:"10px", borderTop:"1px solid #444"}}>
-                <button onClick={() => cargarHistorial(historialPagina - 1)} disabled={historialPagina === 1} style={{background: historialPagina === 1 ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina === 1 ? "not-allowed" : "pointer"}}>⬅ Ant.</button>
-                <span style={{color:"#aaa"}}>Página {historialPagina}</span>
-                <button onClick={() => cargarHistorial(historialPagina + 1)} disabled={listaMovimientos.length < ITEMS_POR_PAGINA} style={{background: listaMovimientos.length < ITEMS_POR_PAGINA ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: listaMovimientos.length < ITEMS_POR_PAGINA ? "not-allowed" : "pointer"}}>Sig. ➡</button>
+                <button 
+                    onClick={() => cargarHistorial(historialPagina - 1)} 
+                    disabled={historialPagina === 1} 
+                    style={{background: historialPagina === 1 ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina === 1 ? "not-allowed" : "pointer"}}
+                >
+                    ⬅ Ant.
+                </button>
+                
+                {/* --- CAMBIO AQUÍ: Agregamos "de {totalPaginas}" --- */}
+                <span style={{color:"#aaa"}}>
+                    Página <strong>{historialPagina}</strong> de <strong>{totalPaginas}</strong>
+                </span>
+
+                <button 
+                    onClick={() => cargarHistorial(historialPagina + 1)} 
+                    disabled={historialPagina >= totalPaginas} // Bloquear si ya estamos en la última
+                    style={{background: historialPagina >= totalPaginas ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina >= totalPaginas ? "not-allowed" : "pointer"}}
+                >
+                    Sig. ➡
+                </button>
             </div>
           </div>
         </div>
