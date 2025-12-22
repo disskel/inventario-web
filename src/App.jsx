@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase/client";
 
+// --- 1. IMPORTAMOS LAS LIBRERÍAS PDF ---
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+
 function App() {
   const [session, setSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -41,7 +45,7 @@ function App() {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
 
-  // --- NUEVO: ESTADOS PARA EL REPORTE ---
+  // Reporte
   const [verReporte, setVerReporte] = useState(false);
   const [repFechaIni, setRepFechaIni] = useState("");
   const [repFechaFin, setRepFechaFin] = useState("");
@@ -144,7 +148,7 @@ function App() {
     cargarHistorial(1);
   }
 
-  // --- 5. LÓGICA DEL REPORTE KARDEX (NUEVO) ---
+  // --- 5. LÓGICA DEL REPORTE KARDEX ---
   async function generarReporte() {
     if (!repFechaIni || !repFechaFin) {
         alert("Por favor selecciona ambas fechas.");
@@ -152,14 +156,13 @@ function App() {
     }
     setCargandoReporte(true);
 
-    // 1. Traer TODOS los movimientos hasta la fecha fin (para calcular el pasado)
     const fechaFinUTC = new Date(`${repFechaFin}T23:59:59.999`).toISOString();
     const fechaIniUTC = new Date(`${repFechaIni}T00:00:00`).toISOString();
 
     const { data: movimientos, error } = await supabase
         .from("movimientos")
         .select("producto_id, tipo_movimiento, cantidad, fecha_movimiento, nombre_producto_historico")
-        .lte("fecha_movimiento", fechaFinUTC); // Traemos todo hasta el final del reporte
+        .lte("fecha_movimiento", fechaFinUTC);
 
     if (error) {
         alert("Error generando reporte: " + error.message);
@@ -167,40 +170,27 @@ function App() {
         return;
     }
 
-    // 2. Procesar datos en memoria (Agrupar por producto)
     const reporteMap = {};
-
     movimientos.forEach(mov => {
         const idProd = mov.producto_id || "BORRADO_" + mov.nombre_producto_historico;
         const nombreProd = mov.nombre_producto_historico || "Producto Desconocido";
 
         if (!reporteMap[idProd]) {
-            reporteMap[idProd] = {
-                id: idProd,
-                nombre: nombreProd,
-                stockInicial: 0,
-                entradas: 0,
-                salidas: 0,
-                stockFinal: 0
-            };
+            reporteMap[idProd] = { id: idProd, nombre: nombreProd, stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0 };
         }
 
         const cantidad = mov.cantidad;
         const esEntrada = mov.tipo_movimiento === "ENTRADA";
 
-        // Lógica de Tiempos
         if (mov.fecha_movimiento < fechaIniUTC) {
-            // Es un movimiento del PASADO (Antes del reporte) -> Afecta al Stock Inicial
             if (esEntrada) reporteMap[idProd].stockInicial += cantidad;
             else reporteMap[idProd].stockInicial -= cantidad;
         } else {
-            // Es un movimiento DENTRO del rango -> Suma a Entradas/Salidas
             if (esEntrada) reporteMap[idProd].entradas += cantidad;
             else reporteMap[idProd].salidas += cantidad;
         }
     });
 
-    // 3. Calcular Stock Final para cada uno
     const resultado = Object.values(reporteMap).map(item => {
         item.stockFinal = item.stockInicial + item.entradas - item.salidas;
         return item;
@@ -210,23 +200,14 @@ function App() {
     setCargandoReporte(false);
   }
 
+  // --- EXPORTAR EXCEL (LATINO) ---
   function exportarExcel() {
     if (datosReporte.length === 0) return;
-
-    // 1. Usamos punto y coma (;) que es el estándar para Excel en Perú/Latam
-    // 2. Agregamos \uFEFF al inicio para que reconozca tildes y ñ (UTF-8 BOM)
     let csvContent = "\uFEFF"; 
-    
-    // CABECERA (Separada por puntos y coma)
     csvContent += "Producto;Stock Inicial;Entradas;Salidas;Stock Final\n"; 
-
     datosReporte.forEach(row => {
-        // CUERPO (Separado por puntos y coma)
-        // Encerramos el nombre en comillas por si el nombre tiene puntos y coma adentro
         csvContent += `"${row.nombre}";${row.stockInicial};${row.entradas};${row.salidas};${row.stockFinal}\n`;
     });
-
-    // Descargar
     const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -236,7 +217,51 @@ function App() {
     document.body.removeChild(link);
   }
 
-  // --- 6. KARDEX (MOVIMIENTOS MANUALES) ---
+  // --- 2. EXPORTAR PDF (NUEVO) ---
+  function exportarPDF() {
+    if (datosReporte.length === 0) return;
+
+    // Crear el documento
+    const doc = new jsPDF();
+
+    // Título y Fechas
+    doc.setFontSize(18);
+    doc.text("Reporte de Kardex Físico", 14, 20);
+    doc.setFontSize(12);
+    doc.text(`Desde: ${repFechaIni}   Hasta: ${repFechaFin}`, 14, 30);
+    doc.text(`Generado el: ${new Date().toLocaleDateString()}`, 14, 36);
+
+    // Definir Columnas y Filas para la tabla
+    const tableColumn = ["Producto", "Stock Ini.", "Entradas", "Salidas", "Stock Fin."];
+    const tableRows = [];
+
+    datosReporte.forEach(row => {
+      const rowData = [
+        row.nombre,
+        row.stockInicial,
+        row.entradas,
+        row.salidas,
+        row.stockFinal
+      ];
+      tableRows.push(rowData);
+    });
+
+    // Generar Tabla con AutoTable
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 45,
+      theme: 'grid', // 'striped', 'grid', 'plain'
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [123, 31, 162] }, // Color morado de tu marca
+    });
+
+    // Descargar
+    doc.save(`Reporte_${repFechaIni}_${repFechaFin}.pdf`);
+  }
+
+
+  // --- 6. KARDEX MANUAL ---
   async function confirmarMovimiento(e) {
     e.preventDefault();
     const esSoloNumeros = /^\d+$/.test(cantidadKardex);
@@ -261,7 +286,6 @@ function App() {
     });
 
     if (errorHist) { alert("Error: " + errorHist.message); return; }
-    
     const { error: errorProd } = await supabase.from("productos").update({ stock_actual: nuevoStock }).eq("id", prodKardex.id);
     if (!errorProd) { setModalVisible(false); fetchDatos(); if (navigator.vibrate) navigator.vibrate(50); }
   }
@@ -302,7 +326,6 @@ function App() {
     }
   }
 
-  // ... (Funciones auxiliares)
   function cargarDatosParaEditar(p) {
     setNombre(p.nombre); setPrecio(p.precio_venta); setStock(p.stock_actual);
     setCategoria(p.categoria_id); setUnidad(p.unidad_medida_id); setIdEditar(p.id);
@@ -346,10 +369,7 @@ function App() {
         <h2 style={{margin:0}}>📦 Mi Bodega</h2>
         <div style={{display:"flex", gap:"5px"}}>
           <button onClick={() => setVerConfig(true)} style={{padding:"8px 12px", background:"#555", color:"white", border:"none", borderRadius:"8px"}}>⚙️</button>
-          
-          {/* NUEVO BOTÓN REPORTE */}
           <button onClick={() => setVerReporte(true)} style={{padding:"8px 12px", background:"#7b1fa2", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>📊</button>
-          
           <button onClick={abrirModalHistorial} style={{padding:"8px 12px", background:"#0288d1", color:"white", border:"none", borderRadius:"8px"}}>📜</button>
           <button onClick={handleLogout} style={{padding:"8px 12px", background:"#d32f2f", color:"white", border:"none", borderRadius:"8px"}}>Salir</button>
         </div>
@@ -421,7 +441,7 @@ function App() {
         </div>
       ))}
 
-      {/* --- MODAL NUEVO: REPORTE GERENCIAL --- */}
+      {/* --- MODAL REPORTE GERENCIAL (ACTUALIZADO CON PDF) --- */}
       {verReporte && (
         <div style={overlayStyle}>
           <div style={{...modalBoxStyle, width: "95%", maxWidth: "800px"}}>
@@ -442,10 +462,18 @@ function App() {
                <button onClick={generarReporte} disabled={cargandoReporte} style={{...btnStyle, width:"auto", background:"#7b1fa2", marginTop:0, padding:"10px 20px"}}>
                  {cargandoReporte ? "Calculando..." : "GENERAR"}
                </button>
+               
+               {/* BOTONES DE EXPORTACIÓN */}
                {datosReporte.length > 0 && (
-                   <button onClick={exportarExcel} style={{...btnStyle, width:"auto", background:"#2e7d32", marginTop:0, padding:"10px 20px"}}>
-                     📥 EXCEL
-                   </button>
+                   <div style={{display:"flex", gap:"5px"}}>
+                        <button onClick={exportarExcel} style={{...btnStyle, width:"auto", background:"#2e7d32", marginTop:0, padding:"10px 15px"}}>
+                            📥 EXCEL
+                        </button>
+                        {/* 3. BOTÓN PDF NUEVO */}
+                        <button onClick={exportarPDF} style={{...btnStyle, width:"auto", background:"#d32f2f", marginTop:0, padding:"10px 15px"}}>
+                            📄 PDF
+                        </button>
+                   </div>
                )}
             </div>
 
@@ -478,12 +506,11 @@ function App() {
                     </table>
                 )}
             </div>
-
           </div>
         </div>
       )}
 
-      {/* MODAL CONFIG (Igual) */}
+      {/* MODAL CONFIG */}
       {verConfig && (
         <div style={overlayStyle}>
            <div style={modalBoxStyle}>
@@ -511,7 +538,7 @@ function App() {
         </div>
       )}
 
-      {/* MODAL KARDEX (Igual) */}
+      {/* MODAL KARDEX */}
       {modalVisible && (
         <div style={overlayStyle}>
            <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
@@ -528,7 +555,7 @@ function App() {
         </div>
       )}
 
-      {/* MODAL HISTORIAL (Igual) */}
+      {/* MODAL HISTORIAL */}
       {verHistorial && (
         <div style={overlayStyle}>
           <div style={modalBoxStyle}>
