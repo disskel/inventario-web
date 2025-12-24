@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase/client";
-
-// --- 1. IMPORTAMOS LAS LIBRERÍAS PDF ---
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -200,7 +198,7 @@ function App() {
     setCargandoReporte(false);
   }
 
-  // --- EXPORTAR EXCEL (LATINO) ---
+  // EXPORTAR EXCEL
   function exportarExcel() {
     if (datosReporte.length === 0) return;
     let csvContent = "\uFEFF"; 
@@ -217,46 +215,32 @@ function App() {
     document.body.removeChild(link);
   }
 
-  // --- 2. EXPORTAR PDF (NUEVO) ---
+  // EXPORTAR PDF
   function exportarPDF() {
     if (datosReporte.length === 0) return;
-
-    // Crear el documento
     const doc = new jsPDF();
-
-    // Título y Fechas
     doc.setFontSize(18);
     doc.text("Reporte de Kardex Físico", 14, 20);
     doc.setFontSize(12);
     doc.text(`Desde: ${repFechaIni}   Hasta: ${repFechaFin}`, 14, 30);
     doc.text(`Generado el: ${new Date().toLocaleDateString()}`, 14, 36);
 
-    // Definir Columnas y Filas para la tabla
     const tableColumn = ["Producto", "Stock Ini.", "Entradas", "Salidas", "Stock Fin."];
     const tableRows = [];
 
     datosReporte.forEach(row => {
-      const rowData = [
-        row.nombre,
-        row.stockInicial,
-        row.entradas,
-        row.salidas,
-        row.stockFinal
-      ];
-      tableRows.push(rowData);
+      tableRows.push([row.nombre, row.stockInicial, row.entradas, row.salidas, row.stockFinal]);
     });
 
-    // Generar Tabla con AutoTable
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
       startY: 45,
-      theme: 'grid', // 'striped', 'grid', 'plain'
+      theme: 'grid',
       styles: { fontSize: 10 },
-      headStyles: { fillColor: [123, 31, 162] }, // Color morado de tu marca
+      headStyles: { fillColor: [123, 31, 162] },
     });
 
-    // Descargar
     doc.save(`Reporte_${repFechaIni}_${repFechaFin}.pdf`);
   }
 
@@ -360,8 +344,27 @@ function App() {
   const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "95%", maxWidth: "500px", maxHeight: "90vh", overflowY: "auto", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
-  if (!session) return (<div style={{color:"white", textAlign:"center", marginTop:"50px"}}>Por favor recarga la página.</div>);
+  
+  // --- 🔴 AQUÍ ESTABA EL ERROR: RESTAURAMOS EL LOGIN ---
+  if (!session) {
+    return (
+      <div style={{...containerStyle, display: "flex", flexDirection: "column", justifyContent: "center", height: "80vh"}}>
+        <h1 style={{textAlign: "center", color: "#4caf50"}}>🔐 Inventario App</h1>
+        <div style={{background: "#1e1e1e", padding: "25px", borderRadius: "15px"}}>
+          <form onSubmit={handleLogin}>
+            <label>Correo:</label>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} style={inputStyle} placeholder="admin@empresa.com" />
+            <label style={{marginTop: "10px", display:"block"}}>Contraseña:</label>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} style={inputStyle} placeholder="******" />
+            {loginError && <p style={{color: "#ff6b6b", textAlign:"center"}}>{loginError}</p>}
+            <button type="submit" style={{...btnStyle, background: "#4caf50", color: "white"}}>INGRESAR AL SISTEMA</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
+  // ... (Resto de la App cuando SÍ hay sesión, igual que antes)
   return (
     <div style={containerStyle}>
       {/* CABECERA */}
@@ -441,7 +444,7 @@ function App() {
         </div>
       ))}
 
-      {/* --- MODAL REPORTE GERENCIAL (ACTUALIZADO CON PDF) --- */}
+      {/* --- MODAL REPORTE GERENCIAL --- */}
       {verReporte && (
         <div style={overlayStyle}>
           <div style={{...modalBoxStyle, width: "95%", maxWidth: "800px"}}>
@@ -463,13 +466,11 @@ function App() {
                  {cargandoReporte ? "Calculando..." : "GENERAR"}
                </button>
                
-               {/* BOTONES DE EXPORTACIÓN */}
                {datosReporte.length > 0 && (
                    <div style={{display:"flex", gap:"5px"}}>
                         <button onClick={exportarExcel} style={{...btnStyle, width:"auto", background:"#2e7d32", marginTop:0, padding:"10px 15px"}}>
                             📥 EXCEL
                         </button>
-                        {/* 3. BOTÓN PDF NUEVO */}
                         <button onClick={exportarPDF} style={{...btnStyle, width:"auto", background:"#d32f2f", marginTop:0, padding:"10px 15px"}}>
                             📄 PDF
                         </button>
@@ -477,7 +478,6 @@ function App() {
                )}
             </div>
 
-            {/* TABLA DE REPORTE */}
             <div style={{overflowX: "auto"}}>
                 {datosReporte.length === 0 ? (
                     <p style={{textAlign:"center", color:"#666"}}>Selecciona un rango y dale a Generar.</p>
