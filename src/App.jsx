@@ -146,7 +146,7 @@ function App() {
     cargarHistorial(1);
   }
 
-  // --- 5. LÓGICA DEL REPORTE KARDEX ---
+  // --- 5. LÓGICA DEL REPORTE KARDEX (MEJORADA: PRODUCTO-CÉNTRICA) ---
   async function generarReporte() {
     if (!repFechaIni || !repFechaFin) {
         alert("Por favor selecciona ambas fechas.");
@@ -157,42 +157,80 @@ function App() {
     const fechaFinUTC = new Date(`${repFechaFin}T23:59:59.999`).toISOString();
     const fechaIniUTC = new Date(`${repFechaIni}T00:00:00`).toISOString();
 
-    const { data: movimientos, error } = await supabase
+    // 1. Traemos TODOS los productos del catálogo (para que nadie se quede fuera)
+    const { data: catalogoProductos, error: errorProd } = await supabase
+        .from("productos")
+        .select("id, nombre");
+
+    if (errorProd) { alert("Error cargando productos"); setCargandoReporte(false); return; }
+
+    // 2. Traemos los movimientos
+    const { data: movimientos, error: errorMov } = await supabase
         .from("movimientos")
         .select("producto_id, tipo_movimiento, cantidad, fecha_movimiento, nombre_producto_historico")
         .lte("fecha_movimiento", fechaFinUTC);
 
-    if (error) {
-        alert("Error generando reporte: " + error.message);
+    if (errorMov) {
+        alert("Error generando reporte: " + errorMov.message);
         setCargandoReporte(false);
         return;
     }
 
+    // 3. Inicializamos el Mapa con TODOS los productos del catálogo (en ceros)
     const reporteMap = {};
-    movimientos.forEach(mov => {
-        const idProd = mov.producto_id || "BORRADO_" + mov.nombre_producto_historico;
-        const nombreProd = mov.nombre_producto_historico || "Producto Desconocido";
+    
+    // Primero llenamos con los productos vivos
+    catalogoProductos.forEach(prod => {
+        reporteMap[prod.id] = { 
+            id: prod.id, 
+            nombre: prod.nombre, 
+            stockInicial: 0, 
+            entradas: 0, 
+            salidas: 0, 
+            stockFinal: 0 
+        };
+    });
 
-        if (!reporteMap[idProd]) {
-            reporteMap[idProd] = { id: idProd, nombre: nombreProd, stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0 };
+    // 4. Procesamos los movimientos sobre el mapa
+    movimientos.forEach(mov => {
+        let idProd = mov.producto_id;
+        
+        // Si el producto fue borrado (no está en catalogoProductos), usamos una clave especial
+        if (!idProd || !reporteMap[idProd]) {
+            idProd = "BORRADO_" + (mov.nombre_producto_historico || "X");
+            // Si es la primera vez que vemos este borrado, lo agregamos al reporte
+            if (!reporteMap[idProd]) {
+                reporteMap[idProd] = {
+                    id: idProd,
+                    nombre: (mov.nombre_producto_historico || "Producto Eliminado") + " (Eliminado)",
+                    stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0
+                };
+            }
         }
 
         const cantidad = mov.cantidad;
         const esEntrada = mov.tipo_movimiento === "ENTRADA";
 
+        // Matemática de Tiempos
         if (mov.fecha_movimiento < fechaIniUTC) {
+            // Pasado (Antes del inicio del reporte) -> Afecta al Stock Inicial
             if (esEntrada) reporteMap[idProd].stockInicial += cantidad;
             else reporteMap[idProd].stockInicial -= cantidad;
         } else {
+            // Presente (Dentro del rango) -> Suma a Entradas/Salidas
             if (esEntrada) reporteMap[idProd].entradas += cantidad;
             else reporteMap[idProd].salidas += cantidad;
         }
     });
 
+    // 5. Calcular Stock Final para todos (Vivos y Borrados)
     const resultado = Object.values(reporteMap).map(item => {
         item.stockFinal = item.stockInicial + item.entradas - item.salidas;
         return item;
     });
+
+    // Ordenar alfabéticamente para que se vea bonito
+    resultado.sort((a, b) => a.nombre.localeCompare(b.nombre));
 
     setDatosReporte(resultado);
     setCargandoReporte(false);
