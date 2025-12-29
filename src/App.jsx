@@ -146,104 +146,64 @@ function App() {
     cargarHistorial(1);
   }
 
-  // --- 5. LÓGICA DEL REPORTE KARDEX (MEJORADA: PRODUCTO-CÉNTRICA) ---
+  // --- 5. REPORTE KARDEX ---
   async function generarReporte() {
-    if (!repFechaIni || !repFechaFin) {
-        alert("Por favor selecciona ambas fechas.");
-        return;
-    }
+    if (!repFechaIni || !repFechaFin) { alert("Por favor selecciona ambas fechas."); return; }
     setCargandoReporte(true);
 
     const fechaFinUTC = new Date(`${repFechaFin}T23:59:59.999`).toISOString();
     const fechaIniUTC = new Date(`${repFechaIni}T00:00:00`).toISOString();
 
-    // 1. Traemos TODOS los productos del catálogo (para que nadie se quede fuera)
-    const { data: catalogoProductos, error: errorProd } = await supabase
-        .from("productos")
-        .select("id, nombre");
-
+    const { data: catalogoProductos, error: errorProd } = await supabase.from("productos").select("id, nombre");
     if (errorProd) { alert("Error cargando productos"); setCargandoReporte(false); return; }
 
-    // 2. Traemos los movimientos
     const { data: movimientos, error: errorMov } = await supabase
         .from("movimientos")
         .select("producto_id, tipo_movimiento, cantidad, fecha_movimiento, nombre_producto_historico")
         .lte("fecha_movimiento", fechaFinUTC);
 
-    if (errorMov) {
-        alert("Error generando reporte: " + errorMov.message);
-        setCargandoReporte(false);
-        return;
-    }
+    if (errorMov) { alert("Error generando reporte: " + errorMov.message); setCargandoReporte(false); return; }
 
-    // 3. Inicializamos el Mapa con TODOS los productos del catálogo (en ceros)
     const reporteMap = {};
-    
-    // Primero llenamos con los productos vivos
     catalogoProductos.forEach(prod => {
-        reporteMap[prod.id] = { 
-            id: prod.id, 
-            nombre: prod.nombre, 
-            stockInicial: 0, 
-            entradas: 0, 
-            salidas: 0, 
-            stockFinal: 0 
-        };
+        reporteMap[prod.id] = { id: prod.id, nombre: prod.nombre, stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0 };
     });
 
-    // 4. Procesamos los movimientos sobre el mapa
     movimientos.forEach(mov => {
         let idProd = mov.producto_id;
-        
-        // Si el producto fue borrado (no está en catalogoProductos), usamos una clave especial
         if (!idProd || !reporteMap[idProd]) {
             idProd = "BORRADO_" + (mov.nombre_producto_historico || "X");
-            // Si es la primera vez que vemos este borrado, lo agregamos al reporte
             if (!reporteMap[idProd]) {
-                reporteMap[idProd] = {
-                    id: idProd,
-                    nombre: (mov.nombre_producto_historico || "Producto Eliminado") + " (Eliminado)",
-                    stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0
-                };
+                reporteMap[idProd] = { id: idProd, nombre: (mov.nombre_producto_historico || "Producto Eliminado") + " (Eliminado)", stockInicial: 0, entradas: 0, salidas: 0, stockFinal: 0 };
             }
         }
-
         const cantidad = mov.cantidad;
         const esEntrada = mov.tipo_movimiento === "ENTRADA";
 
-        // Matemática de Tiempos
         if (mov.fecha_movimiento < fechaIniUTC) {
-            // Pasado (Antes del inicio del reporte) -> Afecta al Stock Inicial
             if (esEntrada) reporteMap[idProd].stockInicial += cantidad;
             else reporteMap[idProd].stockInicial -= cantidad;
         } else {
-            // Presente (Dentro del rango) -> Suma a Entradas/Salidas
             if (esEntrada) reporteMap[idProd].entradas += cantidad;
             else reporteMap[idProd].salidas += cantidad;
         }
     });
 
-    // 5. Calcular Stock Final para todos (Vivos y Borrados)
     const resultado = Object.values(reporteMap).map(item => {
         item.stockFinal = item.stockInicial + item.entradas - item.salidas;
         return item;
     });
 
-    // Ordenar alfabéticamente para que se vea bonito
     resultado.sort((a, b) => a.nombre.localeCompare(b.nombre));
-
     setDatosReporte(resultado);
     setCargandoReporte(false);
   }
 
-  // EXPORTAR EXCEL
   function exportarExcel() {
     if (datosReporte.length === 0) return;
     let csvContent = "\uFEFF"; 
     csvContent += "Producto;Stock Inicial;Entradas;Salidas;Stock Final\n"; 
-    datosReporte.forEach(row => {
-        csvContent += `"${row.nombre}";${row.stockInicial};${row.entradas};${row.salidas};${row.stockFinal}\n`;
-    });
+    datosReporte.forEach(row => { csvContent += `"${row.nombre}";${row.stockInicial};${row.entradas};${row.salidas};${row.stockFinal}\n`; });
     const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -253,7 +213,6 @@ function App() {
     document.body.removeChild(link);
   }
 
-  // EXPORTAR PDF
   function exportarPDF() {
     if (datosReporte.length === 0) return;
     const doc = new jsPDF();
@@ -262,28 +221,21 @@ function App() {
     doc.setFontSize(12);
     doc.text(`Desde: ${repFechaIni}   Hasta: ${repFechaFin}`, 14, 30);
     doc.text(`Generado el: ${new Date().toLocaleDateString()}`, 14, 36);
-
     const tableColumn = ["Producto", "Stock Ini.", "Entradas", "Salidas", "Stock Fin."];
     const tableRows = [];
-
-    datosReporte.forEach(row => {
-      tableRows.push([row.nombre, row.stockInicial, row.entradas, row.salidas, row.stockFinal]);
-    });
-
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 45,
-      theme: 'grid',
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [123, 31, 162] },
-    });
-
+    datosReporte.forEach(row => { tableRows.push([row.nombre, row.stockInicial, row.entradas, row.salidas, row.stockFinal]); });
+    autoTable(doc, { head: [tableColumn], body: tableRows, startY: 45, theme: 'grid', styles: { fontSize: 10 }, headStyles: { fillColor: [123, 31, 162] } });
     doc.save(`Reporte_${repFechaIni}_${repFechaFin}.pdf`);
   }
 
+  // --- 6. KARDEX ---
+  function abrirModalKardex(producto, tipo) {
+    setProdKardex(producto);
+    setTipoKardex(tipo);
+    setCantidadKardex("");
+    setModalVisible(true);
+  }
 
-  // --- 6. KARDEX MANUAL ---
   async function confirmarMovimiento(e) {
     e.preventDefault();
     const esSoloNumeros = /^\d+$/.test(cantidadKardex);
@@ -312,7 +264,7 @@ function App() {
     if (!errorProd) { setModalVisible(false); fetchDatos(); if (navigator.vibrate) navigator.vibrate(50); }
   }
 
-  // --- 7. CRUD PRODUCTOS ---
+  // --- 7. CRUD ---
   async function manejarEnvio(e) {
     e.preventDefault();
     if (!nombre || !precio || !categoria) { alert("Faltan datos"); return; }
@@ -331,9 +283,8 @@ function App() {
       if (res.data) nuevoProductoId = res.data[0].id;
     }
 
-    if (error) {
-      alert(error.message);
-    } else {
+    if (error) { alert(error.message); } 
+    else {
       if (!idEditar && stock > 0 && nuevoProductoId) {
          await supabase.from("movimientos").insert({
             producto_id: nuevoProductoId,
@@ -355,10 +306,7 @@ function App() {
   }
 
   async function eliminarProducto(id) {
-    if (confirm("¿Borrar permanentemente?")) {
-      await supabase.from("productos").delete().eq("id", id);
-      fetchDatos();
-    }
+    if (confirm("¿Borrar permanentemente?")) { await supabase.from("productos").delete().eq("id", id); fetchDatos(); }
   }
 
   function cancelarEdicion() {
@@ -378,12 +326,13 @@ function App() {
   const inputStyle = { padding: "12px", margin: "5px 0", width: "100%", borderRadius: "8px", border: "1px solid #333", background: "#2c2c2c", color: "white", fontSize: "16px", boxSizing: "border-box" };
   const btnStyle = { padding: "12px", width: "100%", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", marginTop: "10px", fontSize: "16px" };
   const btnKardex = { padding: "10px", borderRadius: "8px", border: "none", fontWeight: "bold", cursor: "pointer", color: "white", flex: 1 };
-  const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 };
+  
+  // Z-INDEX AUMENTADO A 10000 PARA EVITAR CONFLICTOS
+  const overlayStyle = { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", background: "rgba(0,0,0,0.9)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 10000 };
   const modalBoxStyle = { background: "#252525", padding: "20px", borderRadius: "15px", width: "95%", maxWidth: "500px", maxHeight: "90vh", overflowY: "auto", border: "1px solid #444" };
 
   if (loadingSession) return <div style={{...containerStyle, textAlign:"center", paddingTop:"50px"}}>⏳ Cargando...</div>;
   
-  // --- 🔴 AQUÍ ESTABA EL ERROR: RESTAURAMOS EL LOGIN ---
   if (!session) {
     return (
       <div style={{...containerStyle, display: "flex", flexDirection: "column", justifyContent: "center", height: "80vh"}}>
@@ -402,7 +351,6 @@ function App() {
     );
   }
 
-  // ... (Resto de la App cuando SÍ hay sesión, igual que antes)
   return (
     <div style={containerStyle}>
       {/* CABECERA */}
@@ -576,23 +524,6 @@ function App() {
         </div>
       )}
 
-      {/* MODAL KARDEX */}
-      {modalVisible && (
-        <div style={overlayStyle}>
-           <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
-             <h2 style={{marginTop: 0, color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}}>{tipoKardex === "ENTRADA" ? "📥 Registrar Entrada" : "📤 Registrar Salida"}</h2>
-             <p style={{color: "#e0e0e0", marginBottom: "15px"}}>Producto: <strong>{prodKardex?.nombre}</strong></p>
-             <form onSubmit={confirmarMovimiento}>
-               <input type="number" inputMode="numeric" autoFocus placeholder="Cantidad" value={cantidadKardex} onChange={(e) => setCantidadKardex(e.target.value)} style={{...inputStyle, fontSize: "24px", textAlign: "center", width: "120px", fontWeight:"bold", color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", border: `2px solid ${tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}`}} />
-               <div style={{display: "flex", gap: "10px", marginTop: "20px"}}>
-                 <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#444", marginTop: 0}}>CANCELAR</button>
-                 <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0, color:"white"}}>CONFIRMAR</button>
-               </div>
-             </form>
-           </div>
-        </div>
-      )}
-
       {/* MODAL HISTORIAL */}
       {verHistorial && (
         <div style={overlayStyle}>
@@ -652,6 +583,24 @@ function App() {
                 <button onClick={() => cargarHistorial(historialPagina + 1)} disabled={historialPagina >= totalPaginas} style={{background: historialPagina >= totalPaginas ? "#333" : "#0288d1", border:"none", color:"white", padding:"8px 15px", borderRadius:"5px", cursor: historialPagina >= totalPaginas ? "not-allowed" : "pointer"}}>Sig. ➡</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* MODAL KARDEX (MOVIDO AL FINAL Y SIN AUTOFOCUS) */}
+      {modalVisible && (
+        <div style={overlayStyle}>
+           <div style={{...modalBoxStyle, maxWidth: "350px", textAlign: "center"}}>
+             <h2 style={{marginTop: 0, color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}}>{tipoKardex === "ENTRADA" ? "📥 Registrar Entrada" : "📤 Registrar Salida"}</h2>
+             <p style={{color: "#e0e0e0", marginBottom: "15px"}}>Producto: <strong>{prodKardex?.nombre}</strong></p>
+             <form onSubmit={confirmarMovimiento}>
+               {/* QUITAMOS AUTOFOCUS POR SI ACASO */}
+               <input type="number" inputMode="numeric" placeholder="Cantidad" value={cantidadKardex} onChange={(e) => setCantidadKardex(e.target.value)} style={{...inputStyle, fontSize: "24px", textAlign: "center", width: "120px", fontWeight:"bold", color: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", border: `2px solid ${tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350"}`}} />
+               <div style={{display: "flex", gap: "10px", marginTop: "20px"}}>
+                 <button type="button" onClick={() => setModalVisible(false)} style={{...btnStyle, background: "#444", marginTop: 0}}>CANCELAR</button>
+                 <button type="submit" style={{...btnStyle, background: tipoKardex === "ENTRADA" ? "#66bb6a" : "#ef5350", marginTop: 0, color:"white"}}>CONFIRMAR</button>
+               </div>
+             </form>
+           </div>
         </div>
       )}
     </div>
