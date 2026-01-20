@@ -355,7 +355,7 @@ function App() {
     <div style={containerStyle}>
       {/* CABECERA */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px"}}>
-        <h2 style={{margin:0}}>📦 Mi Bodega</h2>
+        <h2 style={{margin:0}}>📦 ALMACEN PACHITAS</h2>
         <div style={{display:"flex", gap:"5px"}}>
           <button onClick={() => setVerConfig(true)} style={{padding:"8px 12px", background:"#555", color:"white", border:"none", borderRadius:"8px"}}>⚙️</button>
           <button onClick={() => setVerReporte(true)} style={{padding:"8px 12px", background:"#7b1fa2", color:"white", border:"none", borderRadius:"8px", cursor:"pointer"}}>📊</button>
